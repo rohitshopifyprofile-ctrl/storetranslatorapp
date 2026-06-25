@@ -79,8 +79,16 @@
   var availableLocales = config.availableLocales || [];
   var availableCountries = config.availableCountries || [];
 
-  // Merge default map with merchant overrides
-  var countryToLocale = Object.assign({}, DEFAULT_MAP, config.customCountryMap || {});
+  // Merge default map with merchant overrides. The override comes from a theme
+  // setting (a textarea), so it arrives as a JSON *string* — parse it safely.
+  var customMap = {};
+  var rawCustomMap = config.customCountryMap;
+  if (rawCustomMap && typeof rawCustomMap === "string") {
+    try { customMap = JSON.parse(rawCustomMap) || {}; } catch (_) { customMap = {}; }
+  } else if (rawCustomMap && typeof rawCustomMap === "object") {
+    customMap = rawCustomMap;
+  }
+  var countryToLocale = Object.assign({}, DEFAULT_MAP, customMap);
 
   /**
    * Wire up the <select> elements to auto-submit on change and save preference.

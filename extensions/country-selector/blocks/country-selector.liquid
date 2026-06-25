@@ -17,6 +17,10 @@
   assign country_label = block.settings.country_label | default: 'Country / Currency'
   assign language_label = block.settings.language_label | default: 'Language'
 
+  # Default the custom map here in an assign tag, where the braces in the
+  # default value are safe (they break a Liquid output tag, not an assign).
+  assign custom_country_map = block.settings.custom_country_locale_map | default: '{}'
+
   assign available_countries_count = localization.available_countries | size
   assign available_languages_count = localization.available_languages | size
 -%}
@@ -110,7 +114,7 @@
     currentLocale: {{ localization.language.iso_code | json }},
     availableLocales: {{ localization.available_languages | map: 'iso_code' | json }},
     availableCountries: {{ localization.available_countries | map: 'iso_code' | json }},
-    customCountryMap: {{ block.settings.custom_country_locale_map | default: '{}' | json }}
+    customCountryMap: {{ custom_country_map | json }}
   };
 </script>
 <script src="{{ 'country-selector.js' | asset_url }}" defer></script>
@@ -118,7 +122,7 @@
 
 {% schema %}
 {
-  "name": "Language & Country Selector",
+  "name": "Language & Country",
   "target": "section",
   "settings": [
     {
