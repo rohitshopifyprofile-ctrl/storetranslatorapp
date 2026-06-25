@@ -1,0 +1,13 @@
+# Theme App Extension for the Language & Country Selector block.
+# This file lives in your project root's extensions/ directory.
+
+api_version = "2026-04"
+
+[[extensions]]
+type = "theme"
+name = "Language & Country Selector"
+handle = "country-selector"
+
+  [extensions.development]
+    # Previewed at this path in your dev store
+    preview_url = "/products"

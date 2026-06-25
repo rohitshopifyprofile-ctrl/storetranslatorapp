@@ -1,0 +1,73 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// Note that some adapters may set a maximum length for the String type by default, please ensure your strings are long
+// enough when changing adapters.
+// See https://www.prisma.io/docs/orm/reference/prisma-schema-reference#string for more information
+datasource db {
+  provider = "sqlite"
+  url      = "file:dev.sqlite"
+}
+
+model Session {
+  id            String    @id
+  shop          String
+  state         String
+  isOnline      Boolean   @default(false)
+  scope         String?
+  expires       DateTime?
+  accessToken   String
+  userId        BigInt?
+  firstName     String?
+  lastName      String?
+  email         String?
+  accountOwner  Boolean   @default(false)
+  locale        String?
+  collaborator  Boolean?  @default(false)
+  emailVerified Boolean?  @default(false)
+  refreshToken        String?
+  refreshTokenExpires DateTime?
+}
+
+// Append these models to the schema.prisma that `shopify app init` already
+// generated. It ships with a `Session` model used for auth — keep that one.
+// Then run: npx prisma migrate dev --name add_translator_models
+
+model ShopSettings {
+  id           String   @id @default(cuid())
+  shop         String   @unique
+  shopGid      String?  // gid://shopify/Shop/xxxx — cached for the App Events API
+  sourceLocale String   @default("en")
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
+
+model GlossaryTerm {
+  id           String   @id @default(cuid())
+  shop         String
+  sourceTerm   String
+  targetLocale String
+  targetTerm   String
+  createdAt    DateTime @default(now())
+
+  @@index([shop, targetLocale])
+}
+
+model TranslationJob {
+  id              String    @id @default(cuid())
+  shop            String
+  resourceType    String
+  targetLocale    String
+  status          String    @default("running") // running | completed | failed
+  totalResources  Int       @default(0)
+  wordsTranslated Int       @default(0)
+  errorMessage    String?
+  createdAt       DateTime  @default(now())
+  completedAt     DateTime?
+
+  @@index([shop])
+}

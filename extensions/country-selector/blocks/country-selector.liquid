@@ -1,0 +1,184 @@
+{% comment %}
+  Language & Country Selector — Theme App Extension Block
+
+  Add this block to your theme header via Online Store → Themes → Customize.
+  It renders a language and/or country picker, and optionally auto-redirects
+  visitors to their detected locale on their first visit.
+
+  Requirements:
+    • At least 2 enabled locales OR 2 markets with countries.
+    • The block should be placed in the header section or announcement bar.
+{% endcomment %}
+
+{%- liquid
+  assign show_country = block.settings.show_country
+  assign show_language = block.settings.show_language
+  assign auto_detect = block.settings.auto_detect
+  assign country_label = block.settings.country_label | default: 'Country / Currency'
+  assign language_label = block.settings.language_label | default: 'Language'
+
+  assign available_countries_count = localization.available_countries | size
+  assign available_languages_count = localization.available_languages | size
+-%}
+
+{%- if available_countries_count > 1 or available_languages_count > 1 -%}
+<div
+  class="translator-selector"
+  id="translator-selector"
+  data-auto-detect="{{ auto_detect }}"
+  data-current-country="{{ localization.country.iso_code }}"
+  data-current-locale="{{ localization.language.iso_code }}"
+  style="display: inline-flex; align-items: center; gap: 12px; font-size: 14px;"
+>
+  <form
+    action="{{ localization_url }}"
+    method="post"
+    id="translator-localization-form"
+  >
+    {%- form 'localization', class: 'translator-localization-inner' -%}
+      <input type="hidden" name="return_to" value="{{ request.path }}">
+
+      {%- if show_country and available_countries_count > 1 -%}
+      <div class="translator-selector__country" style="display: inline-flex; align-items: center; gap: 6px;">
+        {%- if block.settings.show_labels -%}
+          <label for="translator-country-select" style="white-space: nowrap;">{{ country_label }}</label>
+        {%- endif -%}
+        <div style="position: relative; display: inline-block;">
+          <select
+            name="country_code"
+            id="translator-country-select"
+            class="translator-selector__select"
+            aria-label="{{ country_label }}"
+            style="padding: 6px 28px 6px 10px; border: 1px solid currentColor; border-radius: 4px; background: transparent; cursor: pointer; appearance: none; -webkit-appearance: none; min-width: 160px;"
+          >
+            {%- for country in localization.available_countries -%}
+              <option
+                value="{{ country.iso_code }}"
+                {%- if country.iso_code == localization.country.iso_code %} selected{%- endif -%}
+              >
+                {{ country.name }} ({{ country.currency.iso_code }} {{ country.currency.symbol }})
+              </option>
+            {%- endfor -%}
+          </select>
+          <span aria-hidden="true" style="position: absolute; right: 8px; top: 50%; transform: translateY(-50%); pointer-events: none;">▾</span>
+        </div>
+      </div>
+      {%- endif -%}
+
+      {%- if show_language and available_languages_count > 1 -%}
+      <div class="translator-selector__language" style="display: inline-flex; align-items: center; gap: 6px;">
+        {%- if block.settings.show_labels -%}
+          <label for="translator-language-select" style="white-space: nowrap;">{{ language_label }}</label>
+        {%- endif -%}
+        <div style="position: relative; display: inline-block;">
+          <select
+            name="locale"
+            id="translator-language-select"
+            class="translator-selector__select"
+            aria-label="{{ language_label }}"
+            style="padding: 6px 28px 6px 10px; border: 1px solid currentColor; border-radius: 4px; background: transparent; cursor: pointer; appearance: none; -webkit-appearance: none; min-width: 120px;"
+          >
+            {%- for language in localization.available_languages -%}
+              <option
+                value="{{ language.iso_code }}"
+                {%- if language.iso_code == localization.language.iso_code %} selected{%- endif -%}
+              >
+                {{ language.endonym_name }}
+              </option>
+            {%- endfor -%}
+          </select>
+          <span aria-hidden="true" style="position: absolute; right: 8px; top: 50%; transform: translateY(-50%); pointer-events: none;">▾</span>
+        </div>
+      </div>
+      {%- endif -%}
+
+      {%- comment -%} Fallback submit button shown when JS is disabled {%- endcomment -%}
+      <noscript>
+        <button type="submit" style="padding: 6px 12px; cursor: pointer;">
+          {{ block.settings.update_button_label | default: 'Update' }}
+        </button>
+      </noscript>
+    {%- endform -%}
+  </form>
+</div>
+
+{% comment %} Pass block settings to the JS module {% endcomment %}
+<script>
+  window.__translatorConfig = {
+    autoDetect: {{ auto_detect | json }},
+    currentCountry: {{ localization.country.iso_code | json }},
+    currentLocale: {{ localization.language.iso_code | json }},
+    availableLocales: {{ localization.available_languages | map: 'iso_code' | json }},
+    availableCountries: {{ localization.available_countries | map: 'iso_code' | json }},
+    customCountryMap: {{ block.settings.custom_country_locale_map | default: '{}' | json }}
+  };
+</script>
+<script src="{{ 'country-selector.js' | asset_url }}" defer></script>
+{%- endif -%}
+
+{% schema %}
+{
+  "name": "Language & Country Selector",
+  "target": "section",
+  "settings": [
+    {
+      "type": "header",
+      "content": "Display"
+    },
+    {
+      "type": "checkbox",
+      "id": "show_language",
+      "label": "Show language selector",
+      "default": true
+    },
+    {
+      "type": "checkbox",
+      "id": "show_country",
+      "label": "Show country / currency selector",
+      "default": true
+    },
+    {
+      "type": "checkbox",
+      "id": "show_labels",
+      "label": "Show labels above selectors",
+      "default": false
+    },
+    {
+      "type": "text",
+      "id": "language_label",
+      "label": "Language label text",
+      "default": "Language"
+    },
+    {
+      "type": "text",
+      "id": "country_label",
+      "label": "Country / Currency label text",
+      "default": "Country / Currency"
+    },
+    {
+      "type": "text",
+      "id": "update_button_label",
+      "label": "Submit button label (no-JS fallback)",
+      "default": "Update"
+    },
+    {
+      "type": "header",
+      "content": "Auto-detection"
+    },
+    {
+      "type": "checkbox",
+      "id": "auto_detect",
+      "label": "Auto-detect visitor's country and redirect",
+      "info": "On first visit, automatically redirects the customer to the locale that matches their detected country. Respects manual selection if the customer has already chosen.",
+      "default": true
+    },
+    {
+      "type": "textarea",
+      "id": "custom_country_locale_map",
+      "label": "Custom country → locale overrides (JSON)",
+      "info": "Optional. Override the default country-to-locale mapping. Example: {\"CA\": \"fr\", \"CH\": \"de\"}",
+      "default": "{}"
+    }
+  ]
+}
+{% endschema %}
