@@ -102,7 +102,7 @@ export async function listShopLocales(admin) {
 const AVAILABLE_LOCALES_QUERY = `#graphql
   query AvailableLocales {
     availableLocales {
-      code
+      code: isoCode
       name
     }
   }
