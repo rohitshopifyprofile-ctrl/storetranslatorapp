@@ -115,6 +115,10 @@
   // have to dig through devtools.
   var DEBUG = false;
   try { DEBUG = /[?&]translator_debug=1\b/.test(window.location.search); } catch (_) {}
+  // ?translator_reset=1 clears any saved language/country preference so
+  // auto-detect runs fresh — useful for repeat testing without a new incognito.
+  var RESET = false;
+  try { RESET = /[?&]translator_reset=1\b/.test(window.location.search); } catch (_) {}
   var _panel = null;
   function debugPanel() {
     if (!DEBUG) return null;
@@ -185,6 +189,11 @@
    */
   function runAutoDetect() {
     if (!autoDetect) { log("auto-detect disabled"); return; }
+
+    if (RESET) {
+      try { localStorage.removeItem(LOCALE_KEY); localStorage.removeItem(COUNTRY_KEY); } catch (_) {}
+      log("reset: cleared saved language/country preference");
+    }
 
     // If the customer has already manually chosen, respect that forever.
     var savedLocale = null;
