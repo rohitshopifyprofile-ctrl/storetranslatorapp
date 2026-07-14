@@ -205,8 +205,10 @@
         ? String(detected.country.handle).toUpperCase()
         : "";
 
-      // Shopify may also directly suggest a language for this visitor — prefer
-      // that, then fall back to our country -> language map.
+      // Shopify's suggestion factors in the visitor's browser language, so it
+      // can return English even for a French visitor. This app is COUNTRY-based
+      // (France -> French), so prefer our country -> language map and only fall
+      // back to Shopify's suggestion when we have no mapping for the country.
       var suggestedLang = null;
       if (data && data.suggestions && data.suggestions.length) {
         var parts = data.suggestions[0].parts || {};
@@ -218,12 +220,12 @@
 
       if (!detectedCountry && !suggestedLang) { log("nothing detected, aborting"); return; }
 
-      var wantLocale = suggestedLang || countryToLocale[detectedCountry];
+      var wantLocale = countryToLocale[detectedCountry] || suggestedLang;
       if (!wantLocale) { log("no language for detected country", detectedCountry); return; }
 
       var targetLocale = resolveAvailableLocale(wantLocale);
       if (!targetLocale) {
-        log("language", wantLocale, "is not a PUBLISHED locale on this shop — publish it on the Languages page");
+        log("language", wantLocale, "not available for this market. Add it to the market's languages in Settings -> Markets (available:", availableLocales, ")");
         return;
       }
 
