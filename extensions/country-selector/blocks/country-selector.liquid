@@ -1,13 +1,13 @@
 {% comment %}
-  Language & Country Selector — Theme App Extension Block
+  Language & Country Selector — Theme App Extension (App Embed)
 
-  Add this block to your theme header via Online Store → Themes → Customize.
-  It renders a language and/or country picker, and optionally auto-redirects
-  visitors to their detected locale on their first visit.
+  This is an app EMBED (schema target: body), so it loads on every storefront
+  page. Enable it via Online Store → Themes → Customize → App embeds.
+  It renders a fixed language/country picker (top-right) and auto-detects the
+  visitor's locale on their first visit.
 
   Requirements:
-    • At least 2 enabled locales OR 2 markets with countries.
-    • The block should be placed in the header section or announcement bar.
+    • At least 2 published locales OR 2 markets with countries (else it hides).
 {% endcomment %}
 
 {%- liquid
@@ -32,7 +32,7 @@
   data-auto-detect="{{ auto_detect }}"
   data-current-country="{{ localization.country.iso_code }}"
   data-current-locale="{{ localization.language.iso_code }}"
-  style="display: inline-flex; align-items: center; gap: 12px; font-size: 14px;"
+  style="position: fixed; top: 10px; right: 10px; z-index: 2147483000; display: inline-flex; align-items: center; gap: 12px; font-size: 14px; background: #fff; color: #111; padding: 8px 12px; border: 1px solid #e0e0e0; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.12);"
 >
     {%- form 'localization', id: 'translator-localization-form', class: 'translator-selector__form' -%}
       <input type="hidden" name="return_to" value="{{ request.path }}">
@@ -117,7 +117,7 @@
 {% schema %}
 {
   "name": "Language & Country",
-  "target": "section",
+  "target": "body",
   "settings": [
     {
       "type": "header",

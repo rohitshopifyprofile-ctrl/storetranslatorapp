@@ -103,24 +103,28 @@ export default function Settings() {
 
       <s-section heading="Country selector (storefront widget)">
         <p>
-          The country and language picker shown to storefront visitors is a theme app extension
-          block. To add it to your store:
+          The country and language picker (and the geo auto-detect) is a theme{" "}
+          <strong>app embed</strong>, so it works on every storefront page. To turn it on:
         </p>
         <ol style={{ marginTop: "8px", lineHeight: 2 }}>
           <li>
             Go to <strong>Online Store → Themes → Customize</strong>.
           </li>
           <li>
-            Click <strong>Add section</strong> or <strong>Add block</strong> in the header area.
+            In the left sidebar, scroll to the bottom and open <strong>App embeds</strong>.
           </li>
           <li>
-            Search for <strong>Language &amp; Country Selector</strong> and add it.
+            Toggle on <strong>Language &amp; Country</strong>, then click <strong>Save</strong>.
           </li>
           <li>
-            Enable <strong>Auto-detect visitor country</strong> in the block settings to
-            automatically redirect visitors based on their location.
+            The selector appears fixed in the top-right of the storefront, and auto-detect runs
+            on every page for first-time visitors.
           </li>
         </ol>
+        <p style={{ marginTop: "8px", color: "#666" }}>
+          Tip: add <code>?translator_debug=1</code> to any storefront URL to see the detection
+          decision in the browser console.
+        </p>
       </s-section>
     </s-page>
   );
