@@ -2,9 +2,8 @@ import { useLoaderData, useFetcher } from "react-router";
 import { authenticate } from "../shopify.server";
 import {
   listMarkets,
-  enableNinetyNineRounding,
-  disableNinetyNineRounding,
-  findRoundingAdjustmentId,
+  setMarketRounding,
+  isRoundingEnabled,
   marketCurrencyCodes,
 } from "../lib/markets.server";
 
@@ -21,7 +20,7 @@ export async function loader({ request }) {
     enabled: m.enabled,
     countries: (m.regions?.nodes ?? []).map((r) => r.name).filter(Boolean),
     currencies: marketCurrencyCodes(m),
-    roundingAdjustmentId: findRoundingAdjustmentId(m),
+    roundingEnabled: isRoundingEnabled(m),
   }));
 
   return { markets };
@@ -32,15 +31,12 @@ export async function action({ request }) {
   const formData = await request.formData();
   const intent = formData.get("intent");
   const marketId = formData.get("marketId");
-  const currenciesRaw = formData.get("currencies");
 
   try {
     if (intent === "enable_rounding") {
-      const currencies = JSON.parse(currenciesRaw);
-      await enableNinetyNineRounding(admin, marketId, currencies);
+      await setMarketRounding(admin, marketId, true);
     } else if (intent === "disable_rounding") {
-      const adjustmentId = formData.get("adjustmentId");
-      await disableNinetyNineRounding(admin, adjustmentId);
+      await setMarketRounding(admin, marketId, false);
     }
     return { ok: true };
   } catch (error) {
@@ -99,8 +95,7 @@ export default function Markets() {
             </thead>
             <tbody>
               {markets.map((market) => {
-                const roundingId = market.roundingAdjustmentId;
-                const hasRounding = !!roundingId;
+                const hasRounding = market.roundingEnabled;
                 const currencies = market.currencies;
                 const countries = market.countries.join(", ");
 
@@ -125,12 +120,13 @@ export default function Markets() {
                       ) : (
                         <s-button
                           variant={hasRounding ? "secondary" : "primary"}
-                          disabled={isLoading || currencies.length === 0}
+                          disabled={isLoading}
                           onClick={() =>
                             fetcher.submit(
-                              hasRounding
-                                ? { intent: "disable_rounding", marketId: market.id, adjustmentId: roundingId }
-                                : { intent: "enable_rounding", marketId: market.id, currencies: JSON.stringify(currencies) },
+                              {
+                                intent: hasRounding ? "disable_rounding" : "enable_rounding",
+                                marketId: market.id,
+                              },
                               { method: "post" }
                             )
                           }

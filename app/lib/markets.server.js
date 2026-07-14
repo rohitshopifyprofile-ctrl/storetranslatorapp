@@ -25,25 +25,7 @@ const MARKETS_QUERY = `#graphql
         currencySettings {
           baseCurrency { currencyCode }
           localCurrencies
-        }
-        priceAdjustments {
-          nodes {
-            id
-            adjustment {
-              __typename
-              ... on MarketPriceAdjustmentPercentageDecrease {
-                percentage
-              }
-              ... on MarketPriceAdjustmentPercentageIncrease {
-                percentage
-              }
-            }
-            currencyAdjustments {
-              currency
-              roundingRulesEnabled
-              roundingAmount
-            }
-          }
+          roundingEnabled
         }
       }
     }
@@ -58,80 +40,34 @@ export async function listMarkets(admin) {
   return data.markets.nodes;
 }
 
-const ADD_PRICE_ADJUSTMENT_MUTATION = `#graphql
-  mutation MarketPriceAdjustmentAdd($marketId: ID!, $adjustment: MarketPriceAdjustmentInput!) {
-    marketPriceAdjustmentAdd(marketId: $marketId, adjustment: $adjustment) {
-      marketPriceAdjustment {
-        id
-        currencyAdjustments {
-          currency
-          roundingRulesEnabled
-          roundingAmount
-        }
-      }
+// Shopify's Markets model exposes rounding as a single boolean per market.
+// When enabled, Shopify rounds converted multi-currency prices to a "nice"
+// value per currency (the .99-style rounding, e.g. €20.00 -> €19.99). We just
+// toggle the flag; Shopify owns the actual per-currency rounding rule.
+const SET_ROUNDING_MUTATION = `#graphql
+  mutation SetMarketRounding($marketId: ID!, $input: MarketCurrencySettingsUpdateInput!) {
+    marketCurrencySettingsUpdate(marketId: $marketId, input: $input) {
       userErrors { field message }
     }
   }
 `;
 
-const REMOVE_PRICE_ADJUSTMENT_MUTATION = `#graphql
-  mutation MarketPriceAdjustmentRemove($id: ID!) {
-    marketPriceAdjustmentRemove(id: $id) {
-      deletedId
-      userErrors { field message }
-    }
-  }
-`;
-
-// Adds a 0%-adjustment price rule with .99 rounding for all currencies in a market.
-// currencyCodes: array of ISO currency codes (e.g. ["EUR", "GBP"])
-export async function enableNinetyNineRounding(admin, marketId, currencyCodes) {
-  const currencyAdjustments = currencyCodes.map((currency) => ({
-    currency,
-    roundingRulesEnabled: true,
-    roundingAmount: -0.01,
-  }));
-
-  const response = await admin.graphql(ADD_PRICE_ADJUSTMENT_MUTATION, {
-    variables: {
-      marketId,
-      adjustment: {
-        // 0% keeps prices unchanged; this object just carries the rounding rule.
-        adjustment: { percentageIncrease: { percentage: 0 } },
-        currencyAdjustments,
-      },
-    },
+// enabled: boolean — turn .99 rounding on/off for the market's foreign currencies.
+export async function setMarketRounding(admin, marketId, enabled) {
+  const response = await admin.graphql(SET_ROUNDING_MUTATION, {
+    variables: { marketId, input: { roundingEnabled: enabled } },
   });
-
   const { data } = await response.json();
-  const result = data.marketPriceAdjustmentAdd;
+  const result = data.marketCurrencySettingsUpdate;
   if (result.userErrors.length > 0) {
     throw new Error(result.userErrors.map((e) => e.message).join(", "));
   }
-  return result.marketPriceAdjustment;
+  return enabled;
 }
 
-export async function disableNinetyNineRounding(admin, adjustmentId) {
-  const response = await admin.graphql(REMOVE_PRICE_ADJUSTMENT_MUTATION, {
-    variables: { id: adjustmentId },
-  });
-  const { data } = await response.json();
-  const result = data.marketPriceAdjustmentRemove;
-  if (result.userErrors.length > 0) {
-    throw new Error(result.userErrors.map((e) => e.message).join(", "));
-  }
-  return result.deletedId;
-}
-
-// Returns the GID of the first price adjustment that has .99 rounding enabled,
-// or null if none exists.
-export function findRoundingAdjustmentId(market) {
-  for (const adj of market.priceAdjustments?.nodes ?? []) {
-    if (adj.currencyAdjustments?.some((ca) => ca.roundingRulesEnabled && ca.roundingAmount === -0.01)) {
-      return adj.id;
-    }
-  }
-  return null;
+// Whether .99 rounding is currently on for this market.
+export function isRoundingEnabled(market) {
+  return Boolean(market.currencySettings?.roundingEnabled);
 }
 
 // Extract unique currency codes from a market's country regions.
