@@ -23,7 +23,7 @@ const MARKETS_QUERY = `#graphql
           }
         }
         currencySettings {
-          baseCurrency { currencyCode symbol }
+          baseCurrency { currencyCode }
           localCurrencies
         }
         priceAdjustments {
