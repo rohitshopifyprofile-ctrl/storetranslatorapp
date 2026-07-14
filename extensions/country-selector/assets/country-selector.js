@@ -110,12 +110,37 @@
     });
   }
 
+  // Debug mode: append ?translator_debug=1 to any storefront URL to see, in the
+  // browser console, exactly what was detected and why we did or didn't switch.
+  var DEBUG = false;
+  try { DEBUG = /[?&]translator_debug=1\b/.test(window.location.search); } catch (_) {}
+  function log() {
+    if (DEBUG && window.console) console.info.apply(console, ["[translator]"].concat([].slice.call(arguments)));
+  }
+
+  // Find the best published locale for a target language. Handles exact matches
+  // ("fr" -> "fr") and region variants ("fr" -> "fr-FR", "pt-BR" -> "pt").
+  function resolveAvailableLocale(target) {
+    if (!target) return null;
+    var t = String(target).toLowerCase();
+    var lower = availableLocales.map(function (l) { return String(l).toLowerCase(); });
+    // 1. exact match
+    var i = lower.indexOf(t);
+    if (i !== -1) return availableLocales[i];
+    // 2. same base language (fr vs fr-FR)
+    var base = t.split("-")[0];
+    for (var j = 0; j < lower.length; j++) {
+      if (lower[j].split("-")[0] === base) return availableLocales[j];
+    }
+    return null;
+  }
+
   /**
    * On the visitor's first visit, check if their detected country maps to a
-   * locale we support, and if so redirect them to it.
+   * locale we support, and if so switch them to it (language + market/currency).
    */
   function runAutoDetect() {
-    if (!autoDetect) return;
+    if (!autoDetect) { log("auto-detect disabled"); return; }
 
     // If the customer has already manually chosen, respect that forever.
     var savedLocale = null;
@@ -125,34 +150,48 @@
       savedCountry = localStorage.getItem(COUNTRY_KEY);
     } catch (_) {}
 
-    if (savedLocale || savedCountry) return;
+    if (savedLocale || savedCountry) {
+      log("prior choice found, not redirecting", { savedLocale: savedLocale, savedCountry: savedCountry });
+      return;
+    }
 
-    // Shopify injects window.Shopify.country (ISO-3166 alpha-2) via geo-detection.
+    // Prefer Shopify's client geo signal; fall back to the server-rendered
+    // current country (Shopify assigns the market by IP, so for a France
+    // visitor with a France/International market this is already "FR").
     var detectedCountry =
       (window.Shopify && window.Shopify.country) || currentCountry;
+    detectedCountry = detectedCountry ? String(detectedCountry).toUpperCase() : "";
 
-    if (!detectedCountry) return;
+    log("detected country", detectedCountry || "(none)", "current locale", currentLocale, "available", availableLocales);
 
-    var targetLocale = countryToLocale[detectedCountry];
-    if (!targetLocale) return; // No mapping for this country
+    if (!detectedCountry) { log("no country detected, aborting"); return; }
 
-    // Only redirect if the locale is available in this shop and differs from current.
-    if (targetLocale === currentLocale) return;
-    if (availableLocales.indexOf(targetLocale) === -1) return;
+    var wantLocale = countryToLocale[detectedCountry];
+    if (!wantLocale) { log("no locale mapping for country", detectedCountry); return; }
+
+    var targetLocale = resolveAvailableLocale(wantLocale);
+    if (!targetLocale) {
+      log("target language", wantLocale, "is not a PUBLISHED locale on this shop — publish it on the Languages page");
+      return;
+    }
+
+    if (String(targetLocale).toLowerCase() === String(currentLocale).toLowerCase()) {
+      log("already showing target locale", targetLocale);
+      return;
+    }
 
     // Mark as auto-redirected so we don't loop.
     try { localStorage.setItem(LOCALE_KEY, targetLocale); } catch (_) {}
 
-    // Find the country that matches (so we also switch the market/currency).
+    // Also switch the country/market (for currency) if it's available.
     var matchingCountry = null;
     if (availableCountries.indexOf(detectedCountry) !== -1) {
       matchingCountry = detectedCountry;
       try { localStorage.setItem(COUNTRY_KEY, detectedCountry); } catch (_) {}
     }
 
-    // Submit the form programmatically.
     var form = document.getElementById("translator-localization-form");
-    if (!form) return;
+    if (!form) { log("localization form not found (block needs >1 language/country)"); return; }
 
     var localeInput = form.querySelector('select[name="locale"]');
     if (localeInput) localeInput.value = targetLocale;
@@ -162,17 +201,21 @@
       if (countryInput) countryInput.value = matchingCountry;
     }
 
+    log("switching to", { locale: targetLocale, country: matchingCountry || "(unchanged)" });
     form.submit();
   }
 
-  if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", function () {
-      initSelects();
-      // Small delay so Shopify.country is populated before we read it.
-      setTimeout(runAutoDetect, 300);
-    });
-  } else {
+  function start() {
     initSelects();
-    setTimeout(runAutoDetect, 300);
+    // currentCountry is server-rendered and reliable, so we can decide right
+    // away. If only window.Shopify.country is available it's already set by the
+    // time our deferred script runs, so no artificial delay is needed.
+    runAutoDetect();
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", start);
+  } else {
+    start();
   }
 })();

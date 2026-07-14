@@ -21,6 +21,7 @@ export default function App() {
         <s-link href="/app">Home</s-link>
         <s-link href="/app/languages">Languages</s-link>
         <s-link href="/app/translate">Translate</s-link>
+        <s-link href="/app/review">Review</s-link>
         <s-link href="/app/markets">Markets &amp; Currency</s-link>
         <s-link href="/app/glossary">Glossary</s-link>
         <s-link href="/app/settings">Settings</s-link>

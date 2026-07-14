@@ -29,6 +29,11 @@ const TRANSLATABLE_CONTENT_QUERY = `#graphql
   }
 `;
 
+// Translatable keys we deliberately never translate. `handle` is the URL slug
+// and must be unique per resource — registering a translated handle collides
+// ("… is already taken as a handle for this resource"), so we keep the original.
+const SKIP_KEYS = new Set(["handle"]);
+
 // Returns only the resources/fields that still need a translation (or whose
 // translation is outdated because the source content changed since).
 export async function getUntranslatedContent(admin, { resourceType, locale, first = 20, after = null }) {
@@ -42,12 +47,53 @@ export async function getUntranslatedContent(admin, { resourceType, locale, firs
     .map((node) => {
       const existing = new Map(node.translations.map((t) => [t.key, t]));
       const pending = node.translatableContent.filter((content) => {
+        if (SKIP_KEYS.has(content.key)) return false;
+        // Skip fields with no source text (Shopify returns empty SEO/handle
+        // entries) — they have nothing to translate and would otherwise be
+        // counted as "items" with 0 words.
+        if (!content.value || content.value.trim().length === 0) return false;
         const current = existing.get(content.key);
         return !current || current.outdated;
       });
       return { resourceId: node.resourceId, pending };
     })
     .filter((r) => r.pending.length > 0);
+
+  return {
+    resources,
+    hasNextPage: connection.pageInfo.hasNextPage,
+    endCursor: connection.pageInfo.endCursor,
+  };
+}
+
+// For the review/preview screen: returns every resource with each translatable
+// text field shown as { key, source, translated, outdated }. Unlike
+// getUntranslatedContent, this does NOT filter to pending — it shows the current
+// state so a merchant can eyeball translation accuracy.
+export async function getTranslationsForReview(admin, { resourceType, locale, first = 25, after = null }) {
+  const response = await admin.graphql(TRANSLATABLE_CONTENT_QUERY, {
+    variables: { resourceType, locale, first, after },
+  });
+  const { data } = await response.json();
+  const connection = data.translatableResources;
+
+  const resources = connection.nodes
+    .map((node) => {
+      const existing = new Map(node.translations.map((t) => [t.key, t]));
+      const fields = node.translatableContent
+        .filter((c) => !SKIP_KEYS.has(c.key) && c.value && c.value.trim().length > 0)
+        .map((c) => {
+          const current = existing.get(c.key);
+          return {
+            key: c.key,
+            source: c.value,
+            translated: current?.value ?? null,
+            outdated: current?.outdated ?? false,
+          };
+        });
+      return { resourceId: node.resourceId, fields };
+    })
+    .filter((r) => r.fields.length > 0);
 
   return {
     resources,
