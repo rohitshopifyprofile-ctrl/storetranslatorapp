@@ -12,7 +12,7 @@ const MARKETS_QUERY = `#graphql
         handle
         enabled
         primary
-        regions {
+        regions(first: 50) {
           nodes {
             __typename
             ... on MarketRegionCountry {

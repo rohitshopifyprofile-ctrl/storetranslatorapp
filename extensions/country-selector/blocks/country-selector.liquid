@@ -34,12 +34,7 @@
   data-current-locale="{{ localization.language.iso_code }}"
   style="display: inline-flex; align-items: center; gap: 12px; font-size: 14px;"
 >
-  <form
-    action="{{ localization_url }}"
-    method="post"
-    id="translator-localization-form"
-  >
-    {%- form 'localization', class: 'translator-localization-inner' -%}
+    {%- form 'localization', id: 'translator-localization-form', class: 'translator-selector__form' -%}
       <input type="hidden" name="return_to" value="{{ request.path }}">
 
       {%- if show_country and available_countries_count > 1 -%}
@@ -103,7 +98,6 @@
         </button>
       </noscript>
     {%- endform -%}
-  </form>
 </div>
 
 {% comment %} Pass block settings to the JS module {% endcomment %}

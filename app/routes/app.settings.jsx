@@ -13,7 +13,10 @@ export async function loader({ request }) {
     }),
     listAvailableLocales(admin),
   ]);
-  return { settings, availableLocales };
+  // Env vars must be read server-side; the component runs in the browser where
+  // `process` is undefined.
+  const provider = process.env.TRANSLATION_PROVIDER === "deepl" ? "DeepL" : "Claude (Anthropic)";
+  return { settings, availableLocales, provider };
 }
 
 export async function action({ request }) {
@@ -32,7 +35,7 @@ export async function action({ request }) {
 }
 
 export default function Settings() {
-  const { settings, availableLocales } = useLoaderData();
+  const { settings, availableLocales, provider } = useLoaderData();
   const fetcher = useFetcher();
 
   return (
@@ -71,7 +74,7 @@ export default function Settings() {
 
       <s-section heading="Translation provider">
         <p>
-          Currently using: <strong>{process.env.TRANSLATION_PROVIDER === "deepl" ? "DeepL" : "Claude (Anthropic)"}</strong>
+          Currently using: <strong>{provider}</strong>
         </p>
         <p style={{ marginTop: "8px", color: "#666" }}>
           To switch providers, update <code>TRANSLATION_PROVIDER</code> in your <code>.env</code>{" "}
