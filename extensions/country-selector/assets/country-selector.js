@@ -110,12 +110,38 @@
     });
   }
 
-  // Debug mode: append ?translator_debug=1 to any storefront URL to see, in the
-  // browser console, exactly what was detected and why we did or didn't switch.
+  // Debug mode: append ?translator_debug=1 to any storefront URL. Logs go to the
+  // browser console AND to a visible on-page panel (bottom-right) so you don't
+  // have to dig through devtools.
   var DEBUG = false;
   try { DEBUG = /[?&]translator_debug=1\b/.test(window.location.search); } catch (_) {}
+  var _panel = null;
+  function debugPanel() {
+    if (!DEBUG) return null;
+    if (_panel) return _panel;
+    var el = document.createElement("div");
+    el.id = "translator-debug";
+    el.style.cssText =
+      "position:fixed;bottom:10px;right:10px;z-index:2147483000;max-width:380px;max-height:45vh;" +
+      "overflow:auto;background:#111;color:#5f5;font:12px/1.45 monospace;padding:10px 12px;" +
+      "border-radius:8px;white-space:pre-wrap;box-shadow:0 2px 12px rgba(0,0,0,.4)";
+    el.textContent = "[translator debug]\n";
+    (document.body || document.documentElement).appendChild(el);
+    _panel = el;
+    return el;
+  }
   function log() {
-    if (DEBUG && window.console) console.info.apply(console, ["[translator]"].concat([].slice.call(arguments)));
+    if (!DEBUG) return;
+    var args = [].slice.call(arguments);
+    if (window.console) console.info.apply(console, ["[translator]"].concat(args));
+    var panel = debugPanel();
+    if (panel) {
+      try {
+        panel.textContent += args
+          .map(function (a) { return typeof a === "object" ? JSON.stringify(a) : String(a); })
+          .join(" ") + "\n";
+      } catch (_) {}
+    }
   }
 
   // Find the best published locale for a target language. Handles exact matches
@@ -144,9 +170,13 @@
     var root = (window.Shopify && window.Shopify.routes && window.Shopify.routes.root) || "/";
     var url = root +
       "browsing_context_suggestions.json?country[enabled]=true&language[enabled]=true";
+    log("fetching geo endpoint", url);
     return fetch(url, { headers: { Accept: "application/json" } })
-      .then(function (r) { return r.ok ? r.json() : null; })
-      .catch(function (e) { log("suggestions fetch failed", e); return null; });
+      .then(function (r) {
+        log("geo endpoint status", r.status, r.ok ? "OK" : "(not available on this domain)");
+        return r.ok ? r.json() : null;
+      })
+      .catch(function (e) { log("geo fetch failed", String(e)); return null; });
   }
 
   /**
@@ -229,6 +259,7 @@
   }
 
   function start() {
+    log("widget loaded", { host: location.host, currentLocale: currentLocale, currentCountry: currentCountry, autoDetect: autoDetect });
     initSelects();
     runAutoDetect();
   }
