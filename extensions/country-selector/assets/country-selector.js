@@ -12,6 +12,10 @@
 
   var LOCALE_KEY = "translator_locale";
   var COUNTRY_KEY = "translator_country";
+  // Per-session marker so a single auto-switch attempt doesn't loop. Unlike the
+  // localStorage keys (which record an explicit manual choice), this is
+  // sessionStorage: a failed/partial switch won't permanently block detection.
+  var ATTEMPT_KEY = "translator_auto_attempted";
 
   // Country ISO → preferred locale. Covers the most common markets; merchants
   // can extend/override via the block's "Custom country → locale overrides" setting.
@@ -192,10 +196,11 @@
 
     if (RESET) {
       try { localStorage.removeItem(LOCALE_KEY); localStorage.removeItem(COUNTRY_KEY); } catch (_) {}
-      log("reset: cleared saved language/country preference");
+      try { sessionStorage.removeItem(ATTEMPT_KEY); } catch (_) {}
+      log("reset: cleared saved preference + this session's attempt marker");
     }
 
-    // If the customer has already manually chosen, respect that forever.
+    // If the customer has already MANUALLY chosen a language/country, respect it.
     var savedLocale = null;
     var savedCountry = null;
     try {
@@ -204,7 +209,16 @@
     } catch (_) {}
 
     if (savedLocale || savedCountry) {
-      log("prior choice found, not redirecting", { savedLocale: savedLocale, savedCountry: savedCountry });
+      log("manual choice found, not auto-switching", { savedLocale: savedLocale, savedCountry: savedCountry });
+      return;
+    }
+
+    // Only auto-attempt once per browser session, so a switch that doesn't take
+    // (e.g. on a preview domain) can't loop — but a new session still retries.
+    var attempted = null;
+    try { attempted = sessionStorage.getItem(ATTEMPT_KEY); } catch (_) {}
+    if (attempted) {
+      log("auto-switch already attempted this session (target was " + attempted + ")");
       return;
     }
 
@@ -243,14 +257,15 @@
         return;
       }
 
-      // Mark as handled so we don't loop or override the customer later.
-      try { localStorage.setItem(LOCALE_KEY, targetLocale); } catch (_) {}
+      // Mark this session as attempted (sessionStorage, not localStorage) so a
+      // failed switch can't permanently block detection. The persistent
+      // localStorage keys are written only on an explicit manual selection.
+      try { sessionStorage.setItem(ATTEMPT_KEY, targetLocale); } catch (_) {}
 
       // Also switch the country/market (for currency) if it's available.
       var matchingCountry = null;
       if (detectedCountry && availableCountries.indexOf(detectedCountry) !== -1) {
         matchingCountry = detectedCountry;
-        try { localStorage.setItem(COUNTRY_KEY, detectedCountry); } catch (_) {}
       }
 
       var form = document.getElementById("translator-localization-form");
