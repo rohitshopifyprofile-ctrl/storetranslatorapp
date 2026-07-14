@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { useLoaderData, useFetcher } from "react-router";
 import { authenticate } from "../shopify.server";
 import {
@@ -5,23 +6,43 @@ import {
   setMarketRounding,
   isRoundingEnabled,
   marketCurrencyCodes,
+  marketWebPresence,
+  setMarketAlternateLocales,
 } from "../lib/markets.server";
+import { listShopLocales } from "../lib/shopify-translations.server";
 
 export async function loader({ request }) {
   const { admin } = await authenticate.admin(request);
-  const rawMarkets = await listMarkets(admin);
+  const [rawMarkets, shopLocales] = await Promise.all([
+    listMarkets(admin),
+    listShopLocales(admin),
+  ]);
+
+  // Languages that CAN be shown to buyers (published, plus the primary).
+  const publishedLocales = shopLocales
+    .filter((l) => l.published || l.primary)
+    .map((l) => ({ locale: l.locale, name: l.name }));
 
   // Pre-compute all derived values here (server-side) so the client component
   // never needs to import from the .server module.
-  const markets = rawMarkets.map((m) => ({
-    id: m.id,
-    name: m.name,
-    primary: m.primary,
-    enabled: m.enabled,
-    countries: (m.regions?.nodes ?? []).map((r) => r.name).filter(Boolean),
-    currencies: marketCurrencyCodes(m),
-    roundingEnabled: isRoundingEnabled(m),
-  }));
+  const markets = rawMarkets.map((m) => {
+    const wp = marketWebPresence(m);
+    const marketLocales = wp ? [wp.defaultLocale, ...wp.alternateLocales].filter(Boolean) : [];
+    const addableLocales = publishedLocales.filter((pl) => !marketLocales.includes(pl.locale));
+    return {
+      id: m.id,
+      name: m.name,
+      primary: m.primary,
+      enabled: m.enabled,
+      countries: (m.regions?.nodes ?? []).map((r) => r.name).filter(Boolean),
+      currencies: marketCurrencyCodes(m),
+      roundingEnabled: isRoundingEnabled(m),
+      webPresenceId: wp?.id ?? null,
+      alternateLocales: wp?.alternateLocales ?? [],
+      marketLocales,
+      addableLocales,
+    };
+  });
 
   return { markets };
 }
@@ -37,6 +58,12 @@ export async function action({ request }) {
       await setMarketRounding(admin, marketId, true);
     } else if (intent === "disable_rounding") {
       await setMarketRounding(admin, marketId, false);
+    } else if (intent === "add_language") {
+      const webPresenceId = formData.get("webPresenceId");
+      const locale = formData.get("locale");
+      const existing = JSON.parse(formData.get("alternateLocales") || "[]");
+      const next = existing.includes(locale) ? existing : [...existing, locale];
+      await setMarketAlternateLocales(admin, webPresenceId, next);
     }
     return { ok: true };
   } catch (error) {
@@ -143,10 +170,42 @@ export default function Markets() {
         )}
       </s-section>
 
+      <s-section heading="Languages per market">
+        <p style={{ color: "#555", marginBottom: "12px" }}>
+          A published language only appears on the storefront for a market if it's added to
+          that market here. This is what makes the geo auto-switch (e.g. France → French) work.
+        </p>
+        {markets.filter((m) => m.webPresenceId).length === 0 ? (
+          <p style={{ color: "#999" }}>No market web presences found.</p>
+        ) : (
+          <table style={{ width: "100%", borderCollapse: "collapse" }}>
+            <thead>
+              <tr style={{ borderBottom: "1px solid #e0e0e0" }}>
+                <Th style={{ width: "25%" }}>Market</Th>
+                <Th style={{ width: "35%" }}>Languages shown to buyers</Th>
+                <Th style={{ width: "40%" }}>Add a published language</Th>
+              </tr>
+            </thead>
+            <tbody>
+              {markets
+                .filter((m) => m.webPresenceId)
+                .map((market) => (
+                  <MarketLanguageRow
+                    key={market.id}
+                    market={market}
+                    fetcher={fetcher}
+                    isLoading={isLoading}
+                  />
+                ))}
+            </tbody>
+          </table>
+        )}
+      </s-section>
+
       <s-section heading="How .99 rounding works">
         <p>
-          When enabled, Shopify's price adjustment system rounds all prices in that market's
-          currencies to the nearest .99 — for example:
+          When you enable rounding for a market, Shopify rounds that market's converted
+          multi-currency prices to a natural value per currency — for example:
         </p>
         <ul style={{ marginTop: "8px", lineHeight: 1.8 }}>
           <li>€20.00 → €19.99</li>
@@ -154,12 +213,64 @@ export default function Markets() {
           <li>$100.00 → $99.99</li>
         </ul>
         <p style={{ marginTop: "8px", color: "#666" }}>
-          This is applied through Shopify's Markets price adjustment feature with a 0% base
-          adjustment and a −0.01 rounding rule, so your base (primary market) prices are
-          unaffected.
+          Rounding only affects converted prices in a market's foreign currencies, so your base
+          (primary market) prices are unaffected. It has no visible effect unless the market
+          uses local/multi-currency.
         </p>
       </s-section>
     </s-page>
+  );
+}
+
+function MarketLanguageRow({ market, fetcher, isLoading }) {
+  const [sel, setSel] = useState(market.addableLocales[0]?.locale ?? "");
+
+  return (
+    <tr style={{ borderBottom: "1px solid #f0f0f0", verticalAlign: "top" }}>
+      <Td>
+        <strong>{market.name}</strong>
+        {market.primary && (
+          <span style={{ marginLeft: 8, fontSize: 11, color: "#0052cc" }}>Primary</span>
+        )}
+      </Td>
+      <Td>{market.marketLocales.join(", ") || "—"}</Td>
+      <Td>
+        {market.addableLocales.length === 0 ? (
+          <span style={{ color: "#999", fontSize: 13 }}>All published languages added</span>
+        ) : (
+          <span style={{ display: "inline-flex", gap: 8, alignItems: "center" }}>
+            <select
+              value={sel}
+              onChange={(e) => setSel(e.target.value)}
+              style={{ padding: "6px", minWidth: 180 }}
+            >
+              {market.addableLocales.map((l) => (
+                <option key={l.locale} value={l.locale}>
+                  {l.name} ({l.locale})
+                </option>
+              ))}
+            </select>
+            <s-button
+              variant="secondary"
+              disabled={isLoading || !sel}
+              onClick={() =>
+                fetcher.submit(
+                  {
+                    intent: "add_language",
+                    webPresenceId: market.webPresenceId,
+                    locale: sel,
+                    alternateLocales: JSON.stringify(market.alternateLocales),
+                  },
+                  { method: "post" }
+                )
+              }
+            >
+              Add
+            </s-button>
+          </span>
+        )}
+      </Td>
+    </tr>
   );
 }
 

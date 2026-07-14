@@ -27,6 +27,13 @@ const MARKETS_QUERY = `#graphql
           localCurrencies
           roundingEnabled
         }
+        webPresences(first: 5) {
+          nodes {
+            id
+            defaultLocale { locale }
+            alternateLocales { locale }
+          }
+        }
       }
     }
   }
@@ -68,6 +75,42 @@ export async function setMarketRounding(admin, marketId, enabled) {
 // Whether .99 rounding is currently on for this market.
 export function isRoundingEnabled(market) {
   return Boolean(market.currencySettings?.roundingEnabled);
+}
+
+// A market's web presence controls which languages the storefront exposes for
+// that market (localization.available_languages). Returns the first web
+// presence as { id, defaultLocale, alternateLocales: [locale, ...] }.
+export function marketWebPresence(market) {
+  const wp = market.webPresences?.nodes?.[0];
+  if (!wp) return null;
+  return {
+    id: wp.id,
+    defaultLocale: wp.defaultLocale?.locale ?? null,
+    alternateLocales: (wp.alternateLocales ?? []).map((l) => l.locale).filter(Boolean),
+  };
+}
+
+const WEB_PRESENCE_UPDATE_MUTATION = `#graphql
+  mutation WebPresenceUpdate($id: ID!, $input: WebPresenceUpdateInput!) {
+    webPresenceUpdate(id: $id, input: $input) {
+      webPresence { id alternateLocales { locale } }
+      userErrors { field message }
+    }
+  }
+`;
+
+// Sets the market web presence's alternate locales (the languages available on
+// the storefront for that market, in addition to the default locale).
+export async function setMarketAlternateLocales(admin, webPresenceId, alternateLocales) {
+  const response = await admin.graphql(WEB_PRESENCE_UPDATE_MUTATION, {
+    variables: { id: webPresenceId, input: { alternateLocales } },
+  });
+  const { data } = await response.json();
+  const result = data.webPresenceUpdate;
+  if (result.userErrors.length > 0) {
+    throw new Error(result.userErrors.map((e) => e.message).join(", "));
+  }
+  return (result.webPresence?.alternateLocales ?? []).map((l) => l.locale);
 }
 
 // Extract unique currency codes from a market's country regions.
