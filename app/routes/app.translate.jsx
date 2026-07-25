@@ -20,18 +20,19 @@ import db from "../db.server";
 //
 // Shopify's Translations API handles any of these: as long as the source app
 // stores its content in Shopify metafields/metaobjects, it will appear here.
+// Values must be valid Shopify TranslatableResourceType enum members.
 const RESOURCE_TYPES = [
   // ── Core product content ────────────────────────────────────
   { value: "PRODUCT", label: "Products (title, description, SEO)", group: "Products" },
-  { value: "PRODUCT_VARIANT", label: "Product variants (option names)", group: "Products" },
   { value: "PRODUCT_OPTION", label: "Product options (Size, Color…)", group: "Products" },
+  { value: "PRODUCT_OPTION_VALUE", label: "Product option values (Small, Red…)", group: "Products" },
   { value: "COLLECTION", label: "Collections (title, description)", group: "Products" },
   // ── Online store ────────────────────────────────────────────
-  { value: "ONLINE_STORE_PAGE", label: "Pages", group: "Online Store" },
-  { value: "ONLINE_STORE_ARTICLE", label: "Blog posts", group: "Online Store" },
-  { value: "ONLINE_STORE_BLOG", label: "Blog titles", group: "Online Store" },
-  { value: "ONLINE_STORE_MENU", label: "Navigation menus", group: "Online Store" },
-  { value: "ONLINE_STORE_SHOP", label: "Shop name & description", group: "Online Store" },
+  { value: "PAGE", label: "Pages", group: "Online Store" },
+  { value: "ARTICLE", label: "Blog posts", group: "Online Store" },
+  { value: "BLOG", label: "Blog titles", group: "Online Store" },
+  { value: "MENU", label: "Navigation menus", group: "Online Store" },
+  { value: "SHOP", label: "Shop name & description", group: "Online Store" },
   { value: "ONLINE_STORE_THEME", label: "Theme UI strings (buttons, labels, checkout text)", group: "Online Store" },
   // ── Policies & checkout ─────────────────────────────────────
   { value: "SHOP_POLICY", label: "Shop policies (refund, privacy, TOS)", group: "Policies" },

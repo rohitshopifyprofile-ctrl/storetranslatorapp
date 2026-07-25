@@ -10,8 +10,10 @@ import {
 const RESOURCE_TYPES = [
   { value: "PRODUCT", label: "Products" },
   { value: "COLLECTION", label: "Collections" },
-  { value: "ONLINE_STORE_PAGE", label: "Pages" },
-  { value: "ONLINE_STORE_ARTICLE", label: "Blog posts" },
+  { value: "PAGE", label: "Pages" },
+  { value: "ARTICLE", label: "Blog posts" },
+  { value: "SHOP", label: "Shop name & description" },
+  { value: "ONLINE_STORE_THEME", label: "Theme UI strings" },
   { value: "SHOP_POLICY", label: "Shop policies" },
   { value: "METAFIELD", label: "Metafields (3rd-party apps)" },
   { value: "METAOBJECT", label: "Metaobjects" },
