@@ -144,7 +144,8 @@ const TRANSLATIONS_REGISTER_MUTATION = `#graphql
 
 // Shopify allows at most 100 translations per translationsRegister call. Theme
 // templates can have more translatable keys than that, so register in batches.
-const MAX_TRANSLATIONS_PER_CALL = 100;
+// Use 50 for a safety margin (the limit counts each key).
+const MAX_TRANSLATIONS_PER_CALL = 50;
 
 // translations: [{ locale, key, value, translatableContentDigest }]
 export async function registerTranslations(admin, resourceId, translations) {
