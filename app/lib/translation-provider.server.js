@@ -17,7 +17,57 @@ export async function translateFields({ texts, sourceLocale, targetLocale, gloss
   return translateWithClaude({ texts, sourceLocale, targetLocale, glossary });
 }
 
+// Keep each Claude call's input (and therefore its JSON output) small enough to
+// fit comfortably under max_tokens. Theme templates can carry very long HTML, so
+// we split a resource's fields into character-bounded chunks and translate each
+// separately, then stitch the results back together in order.
+const MAX_CHARS_PER_CHUNK = 6000;
+const CLAUDE_MAX_TOKENS = 8192;
+
+function chunkTexts(texts, maxChars) {
+  const chunks = [];
+  let current = [];
+  let currentLen = 0;
+  for (const t of texts) {
+    const len = (t.value || "").length;
+    if (current.length > 0 && currentLen + len > maxChars) {
+      chunks.push(current);
+      current = [];
+      currentLen = 0;
+    }
+    current.push(t);
+    currentLen += len;
+  }
+  if (current.length > 0) chunks.push(current);
+  return chunks;
+}
+
+// Parse a JSON array of strings from a model response, tolerating stray prose or
+// markdown code fences by extracting the outermost [ ... ].
+function parseJsonArray(raw) {
+  let s = String(raw).trim();
+  s = s.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "").trim();
+  const start = s.indexOf("[");
+  const end = s.lastIndexOf("]");
+  if (start !== -1 && end > start) s = s.slice(start, end + 1);
+  return JSON.parse(s);
+}
+
 async function translateWithClaude({ texts, sourceLocale, targetLocale, glossary }) {
+  const chunks = chunkTexts(texts, MAX_CHARS_PER_CHUNK);
+  const out = [];
+  for (const chunk of chunks) {
+    const values = await translateChunkWithClaude({ texts: chunk, sourceLocale, targetLocale, glossary });
+    for (let i = 0; i < chunk.length; i++) {
+      // Fall back to the original if a field came back missing, so one bad item
+      // never discards a whole chunk.
+      out.push({ key: chunk[i].key, value: values[i] != null ? values[i] : chunk[i].value });
+    }
+  }
+  return out;
+}
+
+async function translateChunkWithClaude({ texts, sourceLocale, targetLocale, glossary }) {
   const glossaryNote = glossary.length
     ? `Glossary terms — keep these exactly as given, never translate them: ${glossary
         .map((g) => `"${g.sourceTerm}" -> "${g.targetTerm}"`)
@@ -44,7 +94,7 @@ async function translateWithClaude({ texts, sourceLocale, targetLocale, glossary
     },
     body: JSON.stringify({
       model: "claude-sonnet-4-6",
-      max_tokens: 4096,
+      max_tokens: CLAUDE_MAX_TOKENS,
       system,
       messages: [
         {
@@ -60,15 +110,20 @@ async function translateWithClaude({ texts, sourceLocale, targetLocale, glossary
   }
 
   const result = await response.json();
+  const stopReason = result.stop_reason;
   const raw = result.content.find((block) => block.type === "text")?.text ?? "[]";
+
   let translatedValues;
   try {
-    translatedValues = JSON.parse(raw);
+    translatedValues = parseJsonArray(raw);
   } catch {
-    throw new Error(`Claude returned non-JSON output: ${raw.slice(0, 200)}`);
+    const hint = stopReason === "max_tokens" ? " (response hit max_tokens — input chunk too large)" : "";
+    throw new Error(`Claude returned non-JSON output${hint}: ${raw.slice(0, 160)}`);
   }
-
-  return texts.map((t, i) => ({ key: t.key, value: translatedValues[i] }));
+  if (!Array.isArray(translatedValues)) {
+    throw new Error("Claude did not return a JSON array");
+  }
+  return translatedValues;
 }
 
 async function translateWithDeepL({ texts, sourceLocale, targetLocale }) {
