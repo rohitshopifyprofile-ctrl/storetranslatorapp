@@ -142,21 +142,30 @@ const TRANSLATIONS_REGISTER_MUTATION = `#graphql
   }
 `;
 
+// Shopify allows at most 100 translations per translationsRegister call. Theme
+// templates can have more translatable keys than that, so register in batches.
+const MAX_TRANSLATIONS_PER_CALL = 100;
+
 // translations: [{ locale, key, value, translatableContentDigest }]
 export async function registerTranslations(admin, resourceId, translations) {
-  const response = await admin.graphql(TRANSLATIONS_REGISTER_MUTATION, {
-    variables: { resourceId, translations },
-  });
-  const { data } = await response.json();
-  const result = data.translationsRegister;
-  if (result.userErrors.length > 0) {
-    throw new Error(
-      `translationsRegister failed for ${resourceId}: ${result.userErrors
-        .map((e) => e.message)
-        .join(", ")}`
-    );
+  const registered = [];
+  for (let i = 0; i < translations.length; i += MAX_TRANSLATIONS_PER_CALL) {
+    const batch = translations.slice(i, i + MAX_TRANSLATIONS_PER_CALL);
+    const response = await admin.graphql(TRANSLATIONS_REGISTER_MUTATION, {
+      variables: { resourceId, translations: batch },
+    });
+    const { data } = await response.json();
+    const result = data.translationsRegister;
+    if (result.userErrors.length > 0) {
+      throw new Error(
+        `translationsRegister failed for ${resourceId}: ${result.userErrors
+          .map((e) => e.message)
+          .join(", ")}`
+      );
+    }
+    registered.push(...result.translations);
   }
-  return result.translations;
+  return registered;
 }
 
 const SHOP_LOCALES_QUERY = `#graphql

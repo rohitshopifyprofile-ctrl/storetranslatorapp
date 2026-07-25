@@ -57,10 +57,17 @@ async function translateWithClaude({ texts, sourceLocale, targetLocale, glossary
   const chunks = chunkTexts(texts, MAX_CHARS_PER_CHUNK);
   const out = [];
   for (const chunk of chunks) {
-    const values = await translateChunkWithClaude({ texts: chunk, sourceLocale, targetLocale, glossary });
+    let values;
+    try {
+      values = await translateChunkWithClaude({ texts: chunk, sourceLocale, targetLocale, glossary });
+    } catch (error) {
+      // One bad chunk shouldn't discard the whole resource — keep the originals
+      // for this chunk and let the rest translate.
+      console.error("[translate] chunk failed, keeping originals:", error?.message || error);
+      values = [];
+    }
     for (let i = 0; i < chunk.length; i++) {
-      // Fall back to the original if a field came back missing, so one bad item
-      // never discards a whole chunk.
+      // Fall back to the original if a field came back missing.
       out.push({ key: chunk[i].key, value: values[i] != null ? values[i] : chunk[i].value });
     }
   }
