@@ -8,6 +8,7 @@ import {
   getShopGid,
 } from "../lib/shopify-translations.server";
 import { translateFields, countWords } from "../lib/translation-provider.server";
+import { translateWholeStore } from "../lib/auto-translate.server";
 import { reportWordsTranslated } from "../lib/billing-events.server";
 import { glossaryForLocale } from "../lib/glossary.server";
 import db from "../db.server";
@@ -60,6 +61,23 @@ export async function loader({ request }) {
 export async function action({ request }) {
   const { admin, session } = await authenticate.admin(request);
   const formData = await request.formData();
+  const intent = formData.get("intent");
+
+  // "Translate whole store" — sweep every content type × every published
+  // language in the background (products, theme UI/buttons/checkout, collections,
+  // pages, policies, metafields, etc.). Returns immediately; runs async.
+  if (intent === "translate_whole_store") {
+    const job = await db.translationJob.create({
+      data: { shop: session.shop, resourceType: "ALL", targetLocale: "ALL", status: "running" },
+    });
+    translateWholeStore(admin, session.shop, job.id).catch(async (error) => {
+      await db.translationJob
+        .update({ where: { id: job.id }, data: { status: "failed", errorMessage: String(error?.message || error) } })
+        .catch(() => {});
+    });
+    return { ok: true, sweepStarted: true };
+  }
+
   const targetLocale = formData.get("locale");
   const resourceType = formData.get("resourceType");
 
@@ -167,6 +185,31 @@ export default function Translate() {
 
   return (
     <s-page heading="Translate content">
+      <s-section heading="Translate whole store">
+        <p style={{ color: "#555", marginBottom: "12px" }}>
+          Translate <strong>everything</strong> into all your published languages in one go —
+          products, product-page templates, buttons, checkout labels (theme UI), collections,
+          pages, policies, and 3rd-party app content (metafields &amp; metaobjects). Run this at
+          setup and whenever you add a new language.
+        </p>
+        <s-button
+          variant="primary"
+          disabled={isRunning}
+          onClick={() => fetcher.submit({ intent: "translate_whole_store" }, { method: "post" })}
+        >
+          {isRunning ? "Starting…" : "Translate whole store"}
+        </s-button>
+        {result?.sweepStarted && (
+          <s-banner tone="success">
+            <p>
+              Store-wide translation started in the background. Large stores can take several
+              minutes — check the <a href="/app/review">Review</a> page to watch translations fill
+              in. Keep the app server running while it works.
+            </p>
+          </s-banner>
+        )}
+      </s-section>
+
       <s-section heading="Run a translation batch">
         <p style={{ color: "#555", marginBottom: "16px" }}>
           Each batch translates up to {BATCH_SIZE} items. Click <em>Translate next {BATCH_SIZE}</em> repeatedly

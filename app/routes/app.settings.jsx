@@ -29,6 +29,11 @@ export async function action({ request }) {
       where: { shop: session.shop },
       data: { sourceLocale: formData.get("sourceLocale") },
     });
+  } else if (intent === "update_auto_translate") {
+    await db.shopSettings.update({
+      where: { shop: session.shop },
+      data: { autoTranslate: formData.get("autoTranslate") === "true" },
+    });
   }
 
   return { ok: true };
@@ -70,6 +75,31 @@ export default function Settings() {
         {fetcher.data?.ok && (
           <p style={{ marginTop: "8px", color: "#1a7f37" }}>Saved.</p>
         )}
+      </s-section>
+
+      <s-section heading="Automatic translation">
+        <p style={{ marginBottom: "12px" }}>
+          When on, every product you create or edit is automatically translated into all your
+          published languages — no manual batch needed.
+        </p>
+        <label style={{ display: "inline-flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
+          <input
+            type="checkbox"
+            defaultChecked={settings.autoTranslate}
+            onChange={(e) =>
+              fetcher.submit(
+                { intent: "update_auto_translate", autoTranslate: String(e.target.checked) },
+                { method: "post" }
+              )
+            }
+          />
+          <span>Automatically translate new &amp; updated products</span>
+        </label>
+        <p style={{ marginTop: "12px", color: "#666", fontSize: 13 }}>
+          Auto-translation is delivered by webhooks, so it only runs while the app server is
+          online. Store-wide UI (product-page templates, buttons, checkout labels) and existing
+          content are translated with <strong>Translate whole store</strong> on the Translate page.
+        </p>
       </s-section>
 
       <s-section heading="Translation provider">

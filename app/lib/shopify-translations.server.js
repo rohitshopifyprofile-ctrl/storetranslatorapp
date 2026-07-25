@@ -34,6 +34,37 @@ const TRANSLATABLE_CONTENT_QUERY = `#graphql
 // ("… is already taken as a handle for this resource"), so we keep the original.
 const SKIP_KEYS = new Set(["handle"]);
 
+const TRANSLATABLE_RESOURCE_QUERY = `#graphql
+  query TranslatableResource($resourceId: ID!, $locale: String!) {
+    translatableResource(resourceId: $resourceId) {
+      resourceId
+      translatableContent { key value digest locale }
+      translations(locale: $locale) { key value outdated }
+    }
+  }
+`;
+
+// Pending translatable fields for a SINGLE resource (used by webhooks to
+// translate one product/collection/etc.). Returns { resourceId, pending } or
+// null if the resource has no translatable content.
+export async function getResourcePending(admin, resourceId, locale) {
+  const response = await admin.graphql(TRANSLATABLE_RESOURCE_QUERY, {
+    variables: { resourceId, locale },
+  });
+  const { data } = await response.json();
+  const node = data.translatableResource;
+  if (!node) return null;
+
+  const existing = new Map(node.translations.map((t) => [t.key, t]));
+  const pending = node.translatableContent.filter((content) => {
+    if (SKIP_KEYS.has(content.key)) return false;
+    if (!content.value || content.value.trim().length === 0) return false;
+    const current = existing.get(content.key);
+    return !current || current.outdated;
+  });
+  return { resourceId: node.resourceId, pending };
+}
+
 // Returns only the resources/fields that still need a translation (or whose
 // translation is outdated because the source content changed since).
 export async function getUntranslatedContent(admin, { resourceType, locale, first = 20, after = null }) {

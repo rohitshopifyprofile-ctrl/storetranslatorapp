@@ -42,6 +42,7 @@ model ShopSettings {
   shop         String   @unique
   shopGid      String?  // gid://shopify/Shop/xxxx — cached for the App Events API
   sourceLocale String   @default("en")
+  autoTranslate Boolean @default(true) // auto-translate content on create/update via webhooks
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 }
