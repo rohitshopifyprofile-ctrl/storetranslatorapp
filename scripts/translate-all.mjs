@@ -1,6 +1,23 @@
 // Standalone whole-store translator. Talks directly to the Shopify Admin API
 // with the app's offline token, so it doesn't depend on the (flaky) dev tunnel.
-// Env: SHOP, TOKEN, ANTHROPIC_API_KEY, [ONLY_TYPES]
+// HTTP goes through curl (Node's fetch/undici hangs on reused connections in
+// this environment; curl is reliable). Env: SHOP, TOKEN, ANTHROPIC_API_KEY,
+// [ONLY_TYPES], [ONLY_LOCALES]
+import { execFileSync } from "node:child_process";
+
+// POST JSON via curl; returns the response body string. Throws on network
+// failure/timeout (non-zero curl exit) so callers can retry.
+function curlPost(url, headers, bodyObj, timeoutSec) {
+  const args = ["-sS", "-m", String(timeoutSec), "-X", "POST", url];
+  for (const [k, v] of Object.entries(headers)) args.push("-H", `${k}: ${v}`);
+  args.push("--data-binary", "@-");
+  return execFileSync("curl", args, {
+    input: JSON.stringify(bodyObj),
+    encoding: "utf8",
+    maxBuffer: 64 * 1024 * 1024,
+  });
+}
+
 const SHOP = process.env.SHOP;
 const TOKEN = process.env.TOKEN;
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
@@ -23,13 +40,16 @@ const ALL_TYPES = (process.env.ONLY_TYPES || [
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 async function shopify(query, variables) {
-  for (let attempt = 0; attempt < 6; attempt++) {
-    const res = await fetch(ADMIN_URL, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "X-Shopify-Access-Token": TOKEN },
-      body: JSON.stringify({ query, variables }),
-    });
-    const json = await res.json();
+  for (let attempt = 0; attempt < 8; attempt++) {
+    let out;
+    try {
+      out = curlPost(ADMIN_URL, { "Content-Type": "application/json", "X-Shopify-Access-Token": TOKEN }, { query, variables }, 45);
+    } catch (e) {
+      await sleep(2000 * (attempt + 1)); continue; // curl network failure/timeout → retry
+    }
+    let json;
+    try { json = JSON.parse(out); }
+    catch { await sleep(1500 * (attempt + 1)); continue; } // partial/empty body → retry
     if (json.errors) {
       const throttled = JSON.stringify(json.errors).includes("THROTTLED");
       if (throttled) { await sleep(2000 * (attempt + 1)); continue; }
@@ -37,7 +57,7 @@ async function shopify(query, variables) {
     }
     return json.data;
   }
-  throw new Error("GraphQL: throttled after retries");
+  throw new Error("GraphQL: network/throttle failure after retries");
 }
 
 async function publishedLocales() {
@@ -86,19 +106,30 @@ async function claudeChunk(values, target) {
     "Keep tone and roughly the same length.",
     "Respond with ONLY a JSON array of strings, same length and order as input. No commentary, no code fences.",
   ].join(" ");
-  for (let attempt = 0; attempt < 5; attempt++) {
-    const res = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: { "content-type": "application/json", "x-api-key": ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01" },
-      body: JSON.stringify({ model: "claude-sonnet-4-6", max_tokens: 8192, system, messages: [{ role: "user", content: JSON.stringify(values) }] }),
-    });
-    if (res.status === 429 || res.status === 529) { await sleep(3000 * (attempt + 1)); continue; }
-    if (!res.ok) throw new Error("Claude " + res.status + " " + (await res.text()).slice(0, 150));
-    const j = await res.json();
-    const raw = j.content.find((b) => b.type === "text")?.text ?? "[]";
+  for (let attempt = 0; attempt < 6; attempt++) {
+    let out;
+    try {
+      out = curlPost(
+        "https://api.anthropic.com/v1/messages",
+        { "content-type": "application/json", "x-api-key": ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01" },
+        { model: "claude-sonnet-4-6", max_tokens: 8192, system, messages: [{ role: "user", content: JSON.stringify(values) }] },
+        120,
+      );
+    } catch (e) {
+      await sleep(3000 * (attempt + 1)); continue; // curl network/timeout → retry
+    }
+    let j;
+    try { j = JSON.parse(out); }
+    catch { await sleep(2000 * (attempt + 1)); continue; }
+    if (j.type === "error") {
+      const t = j.error?.type || "";
+      if (/overloaded|rate_limit|api_error|timeout/i.test(t)) { await sleep(3000 * (attempt + 1)); continue; }
+      throw new Error("Claude: " + (j.error?.message || t).slice(0, 150));
+    }
+    const raw = j.content?.find((b) => b.type === "text")?.text ?? "[]";
     return parseArr(raw);
   }
-  throw new Error("Claude throttled after retries");
+  throw new Error("Claude failure after retries");
 }
 async function translateValues(texts, target) {
   const out = [];
