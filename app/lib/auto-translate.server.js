@@ -117,6 +117,15 @@ export async function translateWholeStore(admin, shop, jobId = null) {
 
   let totalWords = 0;
   let totalResources = 0;
+  let stepsDone = 0;
+  const stepsTotal = ALL_RESOURCE_TYPES.length * targets.length;
+
+  // Seed the progress totals up front so the bar can render immediately.
+  if (jobId) {
+    await db.translationJob
+      .update({ where: { id: jobId }, data: { stepsTotal, stepsDone: 0 } })
+      .catch(() => {});
+  }
 
   for (const resourceType of ALL_RESOURCE_TYPES) {
     for (const locale of targets) {
@@ -143,6 +152,21 @@ export async function translateWholeStore(admin, shop, jobId = null) {
           hasNext = false;
         }
       }
+      // One (resourceType × locale) step complete — record live progress.
+      stepsDone += 1;
+      if (jobId) {
+        await db.translationJob
+          .update({
+            where: { id: jobId },
+            data: {
+              stepsDone,
+              currentStep: `${resourceType} → ${locale}`,
+              totalResources,
+              wordsTranslated: totalWords,
+            },
+          })
+          .catch(() => {});
+      }
     }
   }
 
@@ -154,6 +178,8 @@ export async function translateWholeStore(admin, shop, jobId = null) {
           status: "completed",
           totalResources,
           wordsTranslated: totalWords,
+          stepsDone: stepsTotal,
+          currentStep: "Done",
           completedAt: new Date(),
         },
       })

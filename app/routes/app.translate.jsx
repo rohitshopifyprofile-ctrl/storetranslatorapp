@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useLoaderData, useFetcher } from "react-router";
 import { authenticate } from "../shopify.server";
 import {
@@ -50,12 +50,27 @@ const RESOURCE_TYPES = [
 const BATCH_SIZE = 10;
 
 export async function loader({ request }) {
-  const { admin } = await authenticate.admin(request);
+  const { admin, session } = await authenticate.admin(request);
   const url = new URL(request.url);
   const locale = url.searchParams.get("locale") || "";
   const shopLocales = await listShopLocales(admin);
   const nonPrimaryLocales = shopLocales.filter((l) => !l.primary);
-  return { locale, resourceTypes: RESOURCE_TYPES, shopLocales: nonPrimaryLocales };
+  // Latest whole-store job, so the progress bar shows even after a page reload.
+  const job = await db.translationJob.findFirst({
+    where: { shop: session.shop, resourceType: "ALL" },
+    orderBy: { createdAt: "desc" },
+  });
+  const initialJob = job
+    ? {
+        status: job.status,
+        stepsTotal: job.stepsTotal,
+        stepsDone: job.stepsDone,
+        currentStep: job.currentStep,
+        wordsTranslated: job.wordsTranslated,
+        errorMessage: job.errorMessage,
+      }
+    : null;
+  return { locale, resourceTypes: RESOURCE_TYPES, shopLocales: nonPrimaryLocales, initialJob };
 }
 
 export async function action({ request }) {
@@ -175,13 +190,29 @@ function groupedTypes(types) {
 }
 
 export default function Translate() {
-  const { locale, resourceTypes, shopLocales } = useLoaderData();
+  const { locale, resourceTypes, shopLocales, initialJob } = useLoaderData();
   const fetcher = useFetcher();
+  const progress = useFetcher();
   const [targetLocale, setTargetLocale] = useState(locale || shopLocales[0]?.locale || "");
   const [resourceType, setResourceType] = useState(resourceTypes[0].value);
 
   const isRunning = fetcher.state !== "idle";
   const result = fetcher.data;
+
+  // Live job = freshest of (polled) or (initial from loader).
+  const job = progress.data?.job ?? initialJob;
+  const jobRunning = job?.status === "running";
+
+  // Poll the progress endpoint while a sweep is running (or just started).
+  useEffect(() => {
+    if (!jobRunning && !result?.sweepStarted) return;
+    const id = setInterval(() => progress.load("/app/translate/progress"), 3000);
+    progress.load("/app/translate/progress");
+    return () => clearInterval(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [jobRunning, result?.sweepStarted]);
+
+  const pct = job && job.stepsTotal > 0 ? Math.round((job.stepsDone / job.stepsTotal) * 100) : 0;
 
   return (
     <s-page heading="Translate content">
@@ -194,18 +225,40 @@ export default function Translate() {
         </p>
         <s-button
           variant="primary"
-          disabled={isRunning}
+          disabled={isRunning || jobRunning}
           onClick={() => fetcher.submit({ intent: "translate_whole_store" }, { method: "post" })}
         >
-          {isRunning ? "Starting…" : "Translate whole store"}
+          {jobRunning ? "Translating…" : isRunning ? "Starting…" : "Translate whole store"}
         </s-button>
-        {result?.sweepStarted && (
-          <s-banner tone="success">
-            <p>
-              Store-wide translation started in the background. Large stores can take several
-              minutes — check the <a href="/app/review">Review</a> page to watch translations fill
-              in. Keep the app server running while it works.
+
+        {job && (job.status === "running" || job.status === "completed") && (
+          <div style={{ marginTop: 16, maxWidth: 560 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, marginBottom: 6 }}>
+              <span>
+                {job.status === "completed" ? "Completed" : "Translating…"}{" "}
+                {job.currentStep && job.status === "running" ? `(${job.currentStep})` : ""}
+              </span>
+              <span>{pct}%</span>
+            </div>
+            <div style={{ height: 10, background: "#e6e6e6", borderRadius: 6, overflow: "hidden" }}>
+              <div
+                style={{
+                  width: `${pct}%`,
+                  height: "100%",
+                  background: job.status === "completed" ? "#1a7f37" : "#0a7",
+                  transition: "width 0.4s ease",
+                }}
+              />
+            </div>
+            <p style={{ marginTop: 6, fontSize: 12, color: "#666" }}>
+              {job.stepsDone}/{job.stepsTotal} steps · {job.wordsTranslated?.toLocaleString?.() ?? job.wordsTranslated} words translated
             </p>
+          </div>
+        )}
+
+        {job?.status === "failed" && (
+          <s-banner tone="critical">
+            <p>Translation stopped: {job.errorMessage || "unknown error"}. Click Translate whole store to resume.</p>
           </s-banner>
         )}
       </s-section>

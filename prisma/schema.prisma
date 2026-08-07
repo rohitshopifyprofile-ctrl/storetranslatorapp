@@ -66,6 +66,9 @@ model TranslationJob {
   status          String    @default("running") // running | completed | failed
   totalResources  Int       @default(0)
   wordsTranslated Int       @default(0)
+  stepsTotal      Int       @default(0)  // total (resourceType × locale) steps for progress %
+  stepsDone       Int       @default(0)  // completed steps so far
+  currentStep     String?                // e.g. "ONLINE_STORE_THEME → de"
   errorMessage    String?
   createdAt       DateTime  @default(now())
   completedAt     DateTime?

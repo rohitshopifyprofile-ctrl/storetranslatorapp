@@ -42,7 +42,14 @@ async function shopify(query, variables) {
 
 async function publishedLocales() {
   const d = await shopify(`{ shopLocales { locale primary published } }`);
-  return d.shopLocales.filter((l) => l.published && !l.primary).map((l) => l.locale);
+  let locales = d.shopLocales.filter((l) => l.published && !l.primary).map((l) => l.locale);
+  // Optional ONLY_LOCALES filter, so a run can be scoped to fit inside the
+  // ~1-hour token window (the token doesn't refresh mid-run).
+  if (process.env.ONLY_LOCALES) {
+    const want = new Set(process.env.ONLY_LOCALES.split(",").map((s) => s.trim()));
+    locales = locales.filter((l) => want.has(l));
+  }
+  return locales;
 }
 
 const CONTENT_Q = `query($t:TranslatableResourceType!,$first:Int!,$after:String,$locale:String!){
@@ -97,8 +104,19 @@ async function translateValues(texts, target) {
   const out = [];
   for (const c of chunk(texts, MAX_CHARS_PER_CHUNK)) {
     let vals;
-    try { vals = await claudeChunk(c.map((t) => t.value), target); }
-    catch (e) { console.error("   chunk failed, keeping originals:", e.message); vals = []; }
+    try {
+      vals = await claudeChunk(c.map((t) => t.value), target);
+    } catch (e) {
+      // A malformed array (e.g. an unescaped quote in one field) shouldn't lose
+      // the whole chunk — retry each field on its own (single-element arrays are
+      // far less likely to malform), falling back to the original only per field.
+      console.error("   chunk parse failed, retrying field-by-field:", e.message);
+      vals = [];
+      for (const t of c) {
+        try { const r = await claudeChunk([t.value], target); vals.push(r[0]); }
+        catch { vals.push(null); }
+      }
+    }
     for (let i = 0; i < c.length; i++) out.push(vals[i] != null ? vals[i] : c[i].value);
   }
   return out;
