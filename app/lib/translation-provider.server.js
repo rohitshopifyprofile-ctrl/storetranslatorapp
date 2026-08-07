@@ -42,15 +42,17 @@ function chunkTexts(texts, maxChars) {
   return chunks;
 }
 
-// Parse a JSON array of strings from a model response, tolerating stray prose or
-// markdown code fences by extracting the outermost [ ... ].
-function parseJsonArray(raw) {
-  let s = String(raw).trim();
-  s = s.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "").trim();
-  const start = s.indexOf("[");
-  const end = s.lastIndexOf("]");
-  if (start !== -1 && end > start) s = s.slice(start, end + 1);
-  return JSON.parse(s);
+// Parse marker-delimited output into an array aligned to the input. Robust to
+// quotes/HTML/newlines (a JSON array of HTML strings is fragile — the model
+// often emits unescaped quotes). Missing segments come back as null.
+function parseSegments(raw, n) {
+  const parts = String(raw).split(/###SEG\s+(\d+)###/);
+  const map = {};
+  for (let i = 1; i < parts.length; i += 2) {
+    const idx = parseInt(parts[i], 10);
+    if (!Number.isNaN(idx)) map[idx] = (parts[i + 1] ?? "").replace(/^\n/, "").replace(/\s+$/, "");
+  }
+  return Array.from({ length: n }, (_, i) => (map[i] != null ? map[i] : null));
 }
 
 async function translateWithClaude({ texts, sourceLocale, targetLocale, glossary }) {
@@ -61,14 +63,14 @@ async function translateWithClaude({ texts, sourceLocale, targetLocale, glossary
     try {
       values = await translateChunkWithClaude({ texts: chunk, sourceLocale, targetLocale, glossary });
     } catch (error) {
-      // One bad chunk shouldn't discard the whole resource — keep the originals
-      // for this chunk and let the rest translate.
-      console.error("[translate] chunk failed, keeping originals:", error?.message || error);
+      console.error("[translate] chunk failed:", error?.message || error);
       values = [];
     }
     for (let i = 0; i < chunk.length; i++) {
-      // Fall back to the original if a field came back missing.
-      out.push({ key: chunk[i].key, value: values[i] != null ? values[i] : chunk[i].value });
+      // IMPORTANT: on failure use null, NOT the original — registering the source
+      // text as its own "translation" pollutes state and shows English on the
+      // storefront. Null-valued fields are left untranslated (skipped by callers).
+      out.push({ key: chunk[i].key, value: values[i] != null ? values[i] : null });
     }
   }
   return out;
@@ -83,14 +85,16 @@ async function translateChunkWithClaude({ texts, sourceLocale, targetLocale, glo
 
   const system = [
     "You are a professional e-commerce localization translator.",
-    `Translate the given fields from locale "${sourceLocale}" to locale "${targetLocale}".`,
-    "Some values contain HTML — preserve every tag, attribute, and entity exactly; translate only the human-readable text inside them.",
-    "Keep tone, formatting, and roughly the same length as the original (this is product and marketing copy).",
+    `Translate each segment from locale "${sourceLocale}" into locale "${targetLocale}".`,
+    "Segments are delimited by lines of the form '###SEG k###' (k is the index). In your reply, output each segment's translation preceded by the exact same '###SEG k###' line, in the same order.",
+    "Some values contain HTML — preserve every tag, attribute, and entity exactly; translate only the human-readable text. Keep tone and roughly the same length.",
     glossaryNote,
-    "Respond with ONLY a JSON array of strings, the same length and order as the input array. No commentary, no markdown code fences.",
+    "Output ONLY the '###SEG k###' markers and translated text. No commentary, no code fences.",
   ]
     .filter(Boolean)
     .join(" ");
+
+  const userContent = texts.map((t, i) => `###SEG ${i}###\n${t.value}`).join("\n");
 
   const response = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
@@ -103,12 +107,7 @@ async function translateChunkWithClaude({ texts, sourceLocale, targetLocale, glo
       model: "claude-sonnet-4-6",
       max_tokens: CLAUDE_MAX_TOKENS,
       system,
-      messages: [
-        {
-          role: "user",
-          content: JSON.stringify(texts.map((t) => t.value)),
-        },
-      ],
+      messages: [{ role: "user", content: userContent }],
     }),
   });
 
@@ -117,20 +116,8 @@ async function translateChunkWithClaude({ texts, sourceLocale, targetLocale, glo
   }
 
   const result = await response.json();
-  const stopReason = result.stop_reason;
-  const raw = result.content.find((block) => block.type === "text")?.text ?? "[]";
-
-  let translatedValues;
-  try {
-    translatedValues = parseJsonArray(raw);
-  } catch {
-    const hint = stopReason === "max_tokens" ? " (response hit max_tokens — input chunk too large)" : "";
-    throw new Error(`Claude returned non-JSON output${hint}: ${raw.slice(0, 160)}`);
-  }
-  if (!Array.isArray(translatedValues)) {
-    throw new Error("Claude did not return a JSON array");
-  }
-  return translatedValues;
+  const raw = result.content.find((block) => block.type === "text")?.text ?? "";
+  return parseSegments(raw, texts.length);
 }
 
 async function translateWithDeepL({ texts, sourceLocale, targetLocale }) {

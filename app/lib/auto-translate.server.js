@@ -75,18 +75,25 @@ async function translateAndRegister(admin, shop, resourceId, pending, sourceLoca
     glossary,
   });
 
-  const inputs = translated.map((t) => {
+  const inputs = [];
+  const translatedFields = [];
+  for (const t of translated) {
     const original = textFields.find((c) => c.key === t.key);
-    return {
+    if (!original) continue;
+    if (t.value == null) continue;              // failed → leave pending, don't register
+    if (t.value === original.value) continue;    // same as source → don't register (no English-pollution)
+    inputs.push({
       locale: targetLocale,
       key: t.key,
       value: t.value,
       translatableContentDigest: original.digest,
-    };
-  });
+    });
+    translatedFields.push(original);
+  }
 
+  if (inputs.length === 0) return 0;
   await registerTranslations(admin, resourceId, inputs);
-  return countWords(textFields);
+  return countWords(translatedFields);
 }
 
 // Translate a single resource (by gid) into every published language.

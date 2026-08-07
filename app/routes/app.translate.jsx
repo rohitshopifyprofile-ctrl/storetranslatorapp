@@ -132,18 +132,24 @@ export async function action({ request }) {
         glossary,
       });
 
-      const translationInputs = translated.map((t) => {
+      const translationInputs = [];
+      const done = [];
+      for (const t of translated) {
         const original = textFields.find((c) => c.key === t.key);
-        return {
+        if (!original || t.value == null || t.value === original.value) continue; // skip failed/same-as-source
+        translationInputs.push({
           locale: targetLocale,
           key: t.key,
           value: t.value,
           translatableContentDigest: original.digest,
-        };
-      });
+        });
+        done.push(original);
+      }
 
-      await registerTranslations(admin, resource.resourceId, translationInputs);
-      wordsTranslated += countWords(textFields);
+      if (translationInputs.length > 0) {
+        await registerTranslations(admin, resource.resourceId, translationInputs);
+        wordsTranslated += countWords(done);
+      }
     }
 
     await db.translationJob.update({

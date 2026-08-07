@@ -92,27 +92,33 @@ function chunk(texts, maxChars) {
   if (cur.length) out.push(cur);
   return out;
 }
-function parseArr(raw) {
-  let s = String(raw).trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "").trim();
-  const a = s.indexOf("["), b = s.lastIndexOf("]");
-  if (a !== -1 && b > a) s = s.slice(a, b + 1);
-  return JSON.parse(s);
+// Parse marker-delimited output back into an array aligned to the input.
+// Robust to quotes/HTML/newlines (unlike a JSON array).
+function parseSegments(raw, n) {
+  const parts = String(raw).split(/###SEG\s+(\d+)###/);
+  const map = {};
+  for (let i = 1; i < parts.length; i += 2) {
+    const idx = parseInt(parts[i], 10);
+    if (!Number.isNaN(idx)) map[idx] = (parts[i + 1] ?? "").replace(/^\n/, "").replace(/\s+$/, "");
+  }
+  return Array.from({ length: n }, (_, i) => (map[i] != null ? map[i] : null));
 }
 async function claudeChunk(values, target) {
   const system = [
     "You are a professional e-commerce localization translator.",
-    `Translate the given fields from English to locale "${target}".`,
-    "Some values contain HTML — preserve every tag, attribute, and entity exactly; translate only the human-readable text.",
-    "Keep tone and roughly the same length.",
-    "Respond with ONLY a JSON array of strings, same length and order as input. No commentary, no code fences.",
+    `Translate each segment from English into locale "${target}".`,
+    "Segments are delimited by lines of the form '###SEG k###' (k is the index). In your reply, output each segment's translation preceded by the exact same '###SEG k###' line, in the same order.",
+    "Some values contain HTML — preserve every tag, attribute, and entity exactly; translate only human-readable text. Keep roughly the same length.",
+    "Output ONLY the '###SEG k###' markers and the translated text. No commentary, no code fences.",
   ].join(" ");
+  const userContent = values.map((v, i) => `###SEG ${i}###\n${v}`).join("\n");
   for (let attempt = 0; attempt < 6; attempt++) {
     let out;
     try {
       out = curlPost(
         "https://api.anthropic.com/v1/messages",
         { "content-type": "application/json", "x-api-key": ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01" },
-        { model: "claude-sonnet-4-6", max_tokens: 8192, system, messages: [{ role: "user", content: JSON.stringify(values) }] },
+        { model: "claude-sonnet-4-6", max_tokens: 8192, system, messages: [{ role: "user", content: userContent }] },
         120,
       );
     } catch (e) {
@@ -126,8 +132,8 @@ async function claudeChunk(values, target) {
       if (/overloaded|rate_limit|api_error|timeout/i.test(t)) { await sleep(3000 * (attempt + 1)); continue; }
       throw new Error("Claude: " + (j.error?.message || t).slice(0, 150));
     }
-    const raw = j.content?.find((b) => b.type === "text")?.text ?? "[]";
-    return parseArr(raw);
+    const raw = j.content?.find((b) => b.type === "text")?.text ?? "";
+    return parseSegments(raw, values.length);
   }
   throw new Error("Claude failure after retries");
 }
@@ -148,7 +154,9 @@ async function translateValues(texts, target) {
         catch { vals.push(null); }
       }
     }
-    for (let i = 0; i < c.length; i++) out.push(vals[i] != null ? vals[i] : c[i].value);
+    // On failure push null (NOT the English original) so we never register
+    // source-as-translation; the field stays pending for a later run.
+    for (let i = 0; i < c.length; i++) out.push(vals[i] != null ? vals[i] : null);
   }
   return out;
 }
@@ -180,14 +188,27 @@ async function run() {
             if (SKIP_KEYS.has(c.key)) return false;
             if (!c.value || !c.value.trim()) return false;
             const cur = existing.get(c.key);
-            return !cur || cur.outdated;
+            if (!cur || cur.outdated) return true;
+            // Repair English-pollution: a prior failed run registered the source
+            // text as the "translation". Re-translate real-text fields whose
+            // stored translation still equals the source.
+            if (cur.value === c.value && /[A-Za-z]{3}/.test(c.value)) return true;
+            return false;
           });
           if (!pending.length) continue;
           try {
             const vals = await translateValues(pending, locale);
-            const inputs = pending.map((c, i) => ({ locale, key: c.key, value: vals[i], translatableContentDigest: c.digest }));
-            await register(node.resourceId, inputs);
-            typeFields += pending.length; typeResources += 1;
+            const inputs = [];
+            for (let i = 0; i < pending.length; i++) {
+              const c = pending[i], v = vals[i];
+              if (v == null) continue;       // failed → leave pending for a later run
+              if (v === c.value) continue;    // same as source → don't register (no pollution)
+              inputs.push({ locale, key: c.key, value: v, translatableContentDigest: c.digest });
+            }
+            if (inputs.length) {
+              await register(node.resourceId, inputs);
+              typeFields += inputs.length; typeResources += 1;
+            }
           } catch (e) { console.error(`   register ${node.resourceId} failed: ${e.message}`); }
         }
         hasNext = conn.pageInfo.hasNextPage; after = conn.pageInfo.endCursor;

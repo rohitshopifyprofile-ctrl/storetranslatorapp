@@ -56,13 +56,19 @@ export async function getResourcePending(admin, resourceId, locale) {
   if (!node) return null;
 
   const existing = new Map(node.translations.map((t) => [t.key, t]));
-  const pending = node.translatableContent.filter((content) => {
-    if (SKIP_KEYS.has(content.key)) return false;
-    if (!content.value || content.value.trim().length === 0) return false;
-    const current = existing.get(content.key);
-    return !current || current.outdated;
-  });
+  const pending = node.translatableContent.filter((content) => isFieldPending(content, existing.get(content.key)));
   return { resourceId: node.resourceId, pending };
+}
+
+// A field needs translating if it has real source text and either has no
+// translation, is outdated, OR its stored "translation" still equals the source
+// (English-pollution left by an earlier failed run — re-translate it).
+function isFieldPending(content, current) {
+  if (SKIP_KEYS.has(content.key)) return false;
+  if (!content.value || content.value.trim().length === 0) return false;
+  if (!current || current.outdated) return true;
+  if (current.value === content.value && /[A-Za-z]{3}/.test(content.value)) return true;
+  return false;
 }
 
 // Returns only the resources/fields that still need a translation (or whose
@@ -77,15 +83,7 @@ export async function getUntranslatedContent(admin, { resourceType, locale, firs
   const resources = connection.nodes
     .map((node) => {
       const existing = new Map(node.translations.map((t) => [t.key, t]));
-      const pending = node.translatableContent.filter((content) => {
-        if (SKIP_KEYS.has(content.key)) return false;
-        // Skip fields with no source text (Shopify returns empty SEO/handle
-        // entries) — they have nothing to translate and would otherwise be
-        // counted as "items" with 0 words.
-        if (!content.value || content.value.trim().length === 0) return false;
-        const current = existing.get(content.key);
-        return !current || current.outdated;
-      });
+      const pending = node.translatableContent.filter((content) => isFieldPending(content, existing.get(content.key)));
       return { resourceId: node.resourceId, pending };
     })
     .filter((r) => r.pending.length > 0);
