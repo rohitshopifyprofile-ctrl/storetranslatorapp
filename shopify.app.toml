@@ -1,7 +1,7 @@
 # Learn more about configuring your app at https://shopify.dev/docs/apps/tools/cli/configuration
 
 client_id = "980f281051050817818f2c4d6b2aa2b7"
-application_url = "https://example.com"
+application_url = "https://storetranslatorapp-production.up.railway.app"
 embedded = true
 name = "storetranslatorapp"
 
@@ -29,7 +29,12 @@ api_version = "2026-07"
   uri = "/webhooks/compliance"
 
 [auth]
-redirect_urls = [ "https://example.com/api/auth" ]
+redirect_urls = [
+  "https://storetranslatorapp-production.up.railway.app/auth/callback",
+  "https://storetranslatorapp-production.up.railway.app/auth/login",
+  "https://storetranslatorapp-production.up.railway.app/auth/shopify/callback",
+  "https://storetranslatorapp-production.up.railway.app/api/auth/callback"
+]
 
 [build]
 automatically_update_urls_on_dev = true
