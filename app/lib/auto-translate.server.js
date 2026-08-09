@@ -130,11 +130,16 @@ export async function autoTranslateResource(admin, shop, resourceId) {
   return words;
 }
 
-// Sweep the ENTIRE store: every content type × every published language.
+// Sweep the store: every content type × the chosen published languages.
+// onlyLocales (array) scopes the run to specific languages; null = all.
 // Long-running; call as a background job. Records progress on a TranslationJob.
-export async function translateWholeStore(admin, shop, jobId = null) {
+export async function translateWholeStore(admin, shop, jobId = null, onlyLocales = null) {
   const sourceLocale = await shopSourceLocale(shop);
-  const targets = await publishedTargetLocales(admin);
+  let targets = await publishedTargetLocales(admin);
+  if (onlyLocales && onlyLocales.length > 0) {
+    const want = new Set(onlyLocales);
+    targets = targets.filter((l) => want.has(l));
+  }
 
   let totalWords = 0;
   let totalResources = 0;

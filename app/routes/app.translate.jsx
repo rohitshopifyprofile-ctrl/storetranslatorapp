@@ -88,10 +88,18 @@ export async function action({ request }) {
       where: { shop: session.shop, resourceType: "ALL", status: "running" },
       data: { status: "failed", errorMessage: "superseded by a new run" },
     });
+    // Optional locale scope: comma-separated list from the language picker.
+    const localesRaw = formData.get("locales");
+    const onlyLocales = localesRaw ? String(localesRaw).split(",").map((s) => s.trim()).filter(Boolean) : null;
     const job = await db.translationJob.create({
-      data: { shop: session.shop, resourceType: "ALL", targetLocale: "ALL", status: "running" },
+      data: {
+        shop: session.shop,
+        resourceType: "ALL",
+        targetLocale: onlyLocales && onlyLocales.length ? onlyLocales.join(",") : "ALL",
+        status: "running",
+      },
     });
-    translateWholeStore(admin, session.shop, job.id).catch(async (error) => {
+    translateWholeStore(admin, session.shop, job.id, onlyLocales).catch(async (error) => {
       await db.translationJob
         .update({ where: { id: job.id }, data: { status: "failed", errorMessage: String(error?.message || error) } })
         .catch(() => {});
@@ -207,6 +215,10 @@ export default function Translate() {
   const progress = useFetcher();
   const [targetLocale, setTargetLocale] = useState(locale || shopLocales[0]?.locale || "");
   const [resourceType, setResourceType] = useState(resourceTypes[0].value);
+  // Which languages the whole-store sweep should cover (default: all).
+  const [sweepLocales, setSweepLocales] = useState(() => shopLocales.map((l) => l.locale));
+  const toggleSweepLocale = (loc) =>
+    setSweepLocales((prev) => (prev.includes(loc) ? prev.filter((l) => l !== loc) : [...prev, loc]));
 
   const isRunning = fetcher.state !== "idle";
   const result = fetcher.data;
@@ -230,17 +242,46 @@ export default function Translate() {
     <s-page heading="Translate content">
       <s-section heading="Translate whole store">
         <p style={{ color: "#555", marginBottom: "12px" }}>
-          Translate <strong>everything</strong> into all your published languages in one go —
-          products, product-page templates, buttons, checkout labels (theme UI), collections,
-          pages, policies, and 3rd-party app content (metafields &amp; metaobjects). Run this at
-          setup and whenever you add a new language.
+          Translate <strong>all content</strong> — products, product-page templates, buttons &amp;
+          checkout labels (theme UI), collections, pages, policies, and 3rd-party app content
+          (metafields &amp; metaobjects) — into the languages you pick below.
         </p>
+
+        <div style={{ marginBottom: 12 }}>
+          <label style={labelStyle}>Languages to translate</label>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: "8px 16px", marginBottom: 8 }}>
+            {shopLocales.map((l) => (
+              <label key={l.locale} style={{ display: "inline-flex", alignItems: "center", gap: 6, cursor: "pointer" }}>
+                <input
+                  type="checkbox"
+                  checked={sweepLocales.includes(l.locale)}
+                  onChange={() => toggleSweepLocale(l.locale)}
+                />
+                <span>{l.name} ({l.locale})</span>
+              </label>
+            ))}
+          </div>
+          <span style={{ display: "inline-flex", gap: 10, fontSize: 12 }}>
+            <a href="#" onClick={(e) => { e.preventDefault(); setSweepLocales(shopLocales.map((l) => l.locale)); }}>Select all</a>
+            <a href="#" onClick={(e) => { e.preventDefault(); setSweepLocales([]); }}>Clear</a>
+          </span>
+        </div>
+
         <s-button
           variant="primary"
-          disabled={isRunning}
-          onClick={() => fetcher.submit({ intent: "translate_whole_store" }, { method: "post" })}
+          disabled={isRunning || sweepLocales.length === 0}
+          onClick={() =>
+            fetcher.submit(
+              { intent: "translate_whole_store", locales: sweepLocales.join(",") },
+              { method: "post" }
+            )
+          }
         >
-          {isRunning ? "Starting…" : jobRunning ? "Restart / resume" : "Translate whole store"}
+          {isRunning
+            ? "Starting…"
+            : jobRunning
+            ? "Restart / resume"
+            : `Translate ${sweepLocales.length} language${sweepLocales.length === 1 ? "" : "s"}`}
         </s-button>
         {jobRunning && (
           <p style={{ marginTop: 6, fontSize: 12, color: "#666" }}>
