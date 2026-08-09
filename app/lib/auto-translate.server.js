@@ -20,31 +20,45 @@ import db from "../db.server";
 // Every translatable content type Shopify exposes. "Whole store" walks them all.
 // ONLINE_STORE_THEME + the theme_* types cover product-page templates, buttons,
 // checkout labels and other storefront UI strings.
+// Ordered high-impact + well-behaved first, and the single giant
+// ONLINE_STORE_THEME node LAST — it's one resource with thousands of fields, so
+// it's the slow one; keeping it last means everything the shopper actually sees
+// (products, product-page templates, theme locale strings, collections, pages,
+// metafields) finishes first even if the big theme step runs long.
 const ALL_RESOURCE_TYPES = [
   "PRODUCT",
-  "PRODUCT_OPTION",
-  "PRODUCT_OPTION_VALUE",
   "COLLECTION",
   "PAGE",
   "ARTICLE",
   "BLOG",
   "MENU",
-  "SHOP",
-  "SHOP_POLICY",
-  "ONLINE_STORE_THEME",
+  "PRODUCT_OPTION",
+  "PRODUCT_OPTION_VALUE",
   "ONLINE_STORE_THEME_JSON_TEMPLATE",
   "ONLINE_STORE_THEME_LOCALE_CONTENT",
-  "ONLINE_STORE_THEME_SETTINGS_CATEGORY",
   "ONLINE_STORE_THEME_SETTINGS_DATA_SECTIONS",
+  "ONLINE_STORE_THEME_SETTINGS_CATEGORY",
   "ONLINE_STORE_THEME_SECTION_GROUP",
   "ONLINE_STORE_THEME_APP_EMBED",
+  "METAFIELD",
+  "METAOBJECT",
+  "SHOP",
+  "SHOP_POLICY",
   "EMAIL_TEMPLATE",
   "PACKING_SLIP_TEMPLATE",
   "PAYMENT_GATEWAY",
   "DELIVERY_METHOD_DEFINITION",
-  "METAFIELD",
-  "METAOBJECT",
+  "ONLINE_STORE_THEME",
 ];
+
+// Reject if `promise` doesn't settle within `ms` — prevents a stalled API call
+// from hanging the background sweep forever (which froze the progress bar).
+function withTimeout(promise, ms, label) {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => setTimeout(() => reject(new Error(`timeout after ${ms}ms: ${label}`)), ms)),
+  ]);
+}
 
 // Published, non-primary locales — the languages we translate INTO.
 export async function publishedTargetLocales(admin) {
@@ -140,21 +154,29 @@ export async function translateWholeStore(admin, shop, jobId = null) {
       let hasNext = true;
       while (hasNext) {
         try {
-          const { resources, hasNextPage, endCursor } = await getUntranslatedContent(admin, {
-            resourceType,
-            locale,
-            first: 10,
-            after,
-          });
+          // Timeout the query so a huge/slow resource (e.g. the giant theme
+          // node) can never hang the whole sweep — skip and move on instead.
+          const { resources, hasNextPage, endCursor } = await withTimeout(
+            getUntranslatedContent(admin, { resourceType, locale, first: 10, after }),
+            90000,
+            `${resourceType}/${locale} query`,
+          );
           for (const r of resources) {
-            totalWords += await translateAndRegister(admin, shop, r.resourceId, r.pending, sourceLocale, locale);
+            const w = await translateAndRegister(admin, shop, r.resourceId, r.pending, sourceLocale, locale);
+            totalWords += w;
             totalResources += 1;
+            // Live word count so the bar visibly moves even within a long step.
+            if (jobId && w > 0) {
+              await db.translationJob
+                .update({ where: { id: jobId }, data: { wordsTranslated: totalWords, currentStep: `${resourceType} → ${locale}` } })
+                .catch(() => {});
+            }
           }
           hasNext = hasNextPage;
           after = endCursor;
         } catch (error) {
-          // Some resource types may not be present/queryable on a given store —
-          // skip and keep going rather than aborting the whole sweep.
+          // Some resource types may not be present/queryable on a given store, or
+          // a query may time out — skip and keep going rather than aborting.
           console.error(`[whole-store] ${resourceType} -> ${locale} failed:`, error?.message || error);
           hasNext = false;
         }
