@@ -95,22 +95,45 @@ async function translateChunkWithClaude({ texts, sourceLocale, targetLocale, glo
     .join(" ");
 
   const userContent = texts.map((t, i) => `###SEG ${i}###\n${t.value}`).join("\n");
-
-  const response = await fetch("https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      "x-api-key": process.env.ANTHROPIC_API_KEY,
-      "anthropic-version": "2023-06-01",
-    },
-    body: JSON.stringify({
-      model: "claude-sonnet-4-6",
-      max_tokens: CLAUDE_MAX_TOKENS,
-      system,
-      messages: [{ role: "user", content: userContent }],
-    }),
+  const body = JSON.stringify({
+    model: "claude-sonnet-4-6",
+    max_tokens: CLAUDE_MAX_TOKENS,
+    system,
+    messages: [{ role: "user", content: userContent }],
   });
 
+  // Hard timeout + retries so a single stalled request can never hang the whole
+  // background sweep (which would freeze the progress bar / job forever).
+  let response;
+  let lastErr;
+  for (let attempt = 0; attempt < 4; attempt++) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 120000);
+    try {
+      response = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-api-key": process.env.ANTHROPIC_API_KEY,
+          "anthropic-version": "2023-06-01",
+        },
+        body,
+        signal: controller.signal,
+      });
+    } catch (e) {
+      lastErr = e;
+      clearTimeout(timer);
+      await new Promise((r) => setTimeout(r, 2000 * (attempt + 1))); // timeout/network → retry
+      continue;
+    }
+    clearTimeout(timer);
+    if (response.status === 429 || response.status === 529) {
+      await new Promise((r) => setTimeout(r, 3000 * (attempt + 1))); // rate limited → retry
+      continue;
+    }
+    break;
+  }
+  if (!response) throw new Error(`Claude request failed after retries: ${lastErr?.message || "timeout"}`);
   if (!response.ok) {
     throw new Error(`Claude translation request failed: ${response.status} ${await response.text()}`);
   }

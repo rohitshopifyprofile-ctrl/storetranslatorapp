@@ -82,6 +82,12 @@ export async function action({ request }) {
   // language in the background (products, theme UI/buttons/checkout, collections,
   // pages, policies, metafields, etc.). Returns immediately; runs async.
   if (intent === "translate_whole_store") {
+    // Supersede any previous sweep that's stuck "running" (e.g. a background job
+    // that stalled/was killed), so it can't block the UI or double-run.
+    await db.translationJob.updateMany({
+      where: { shop: session.shop, resourceType: "ALL", status: "running" },
+      data: { status: "failed", errorMessage: "superseded by a new run" },
+    });
     const job = await db.translationJob.create({
       data: { shop: session.shop, resourceType: "ALL", targetLocale: "ALL", status: "running" },
     });
@@ -231,11 +237,17 @@ export default function Translate() {
         </p>
         <s-button
           variant="primary"
-          disabled={isRunning || jobRunning}
+          disabled={isRunning}
           onClick={() => fetcher.submit({ intent: "translate_whole_store" }, { method: "post" })}
         >
-          {jobRunning ? "Translating…" : isRunning ? "Starting…" : "Translate whole store"}
+          {isRunning ? "Starting…" : jobRunning ? "Restart / resume" : "Translate whole store"}
         </s-button>
+        {jobRunning && (
+          <p style={{ marginTop: 6, fontSize: 12, color: "#666" }}>
+            A run is in progress below. If the bar stops advancing for a while, click{" "}
+            <strong>Restart / resume</strong> — it picks up where it left off.
+          </p>
+        )}
 
         {job && (job.status === "running" || job.status === "completed") && (
           <div style={{ marginTop: 16, maxWidth: 560 }}>
