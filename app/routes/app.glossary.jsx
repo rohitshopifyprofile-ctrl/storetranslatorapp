@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { AppHero } from "../components/ui";
 import { useLoaderData, useFetcher } from "react-router";
 import { authenticate } from "../shopify.server";
 import { listGlossaryTerms, addGlossaryTerm, deleteGlossaryTerm } from "../lib/glossary.server";
@@ -45,7 +46,8 @@ export default function Glossary() {
   };
 
   return (
-    <s-page heading="Glossary">
+    <s-page>
+      <AppHero title="Glossary" subtitle="Terms to keep unchanged or translate a specific way." emoji="📖" />
       <s-section heading="Do-not-translate terms">
         <p>
           Brand names, product codes, or phrases that should stay fixed in every language.

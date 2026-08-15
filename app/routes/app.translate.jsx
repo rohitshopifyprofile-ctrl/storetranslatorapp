@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { AppHero } from "../components/ui";
 import { useLoaderData, useFetcher } from "react-router";
 import { authenticate } from "../shopify.server";
 import {
@@ -297,7 +298,8 @@ export default function Translate() {
   const pct = job && job.stepsTotal > 0 ? Math.round((job.stepsDone / job.stepsTotal) * 100) : 0;
 
   return (
-    <s-page heading="Translate content">
+    <s-page>
+      <AppHero title="Translate content" subtitle="Translate your whole store, a single product, or one content type at a time." emoji="✨" />
       <s-section heading="Translate whole store">
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12 }}>
           <p style={{ color: "var(--p-color-text-secondary, #6d7175)", marginTop: 0, marginBottom: 16, maxWidth: 640 }}>

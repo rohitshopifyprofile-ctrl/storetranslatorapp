@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { AppHero } from "../components/ui";
 import { useLoaderData, useNavigate, useNavigation } from "react-router";
 import { authenticate } from "../shopify.server";
 import {
@@ -79,7 +80,8 @@ export default function Review() {
   const totalCount = resources.reduce((n, r) => n + r.fields.length, 0);
 
   return (
-    <s-page heading="Review translations">
+    <s-page>
+      <AppHero title="Review translations" subtitle="Compare source and translated content side by side." emoji="🔍" />
       <s-section heading="Preview & verify accuracy">
         <p style={{ color: "#555", marginBottom: "16px" }}>
           Compare the original content with its translation, field by field. Fields showing{" "}

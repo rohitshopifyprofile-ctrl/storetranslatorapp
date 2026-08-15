@@ -1,4 +1,5 @@
 import { useLoaderData, useFetcher } from "react-router";
+import { AppHero } from "../components/ui";
 import { authenticate } from "../shopify.server";
 import { listAvailableLocales } from "../lib/shopify-translations.server";
 import db from "../db.server";
@@ -44,7 +45,8 @@ export default function Settings() {
   const fetcher = useFetcher();
 
   return (
-    <s-page heading="Settings">
+    <s-page>
+      <AppHero title="Settings" subtitle="Source language, translation engine, billing and the storefront widget." emoji="⚙️" />
       <s-section heading="Source language">
         <p style={{ marginBottom: "12px" }}>
           The language your store's content is written in. Translations are generated{" "}

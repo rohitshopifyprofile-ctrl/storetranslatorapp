@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { AppHero } from "../components/ui";
 import { useLoaderData, useFetcher } from "react-router";
 import { authenticate } from "../shopify.server";
 import {
@@ -39,7 +40,8 @@ export default function Languages() {
   const [selected, setSelected] = useState(addable[0]?.code ?? "");
 
   return (
-    <s-page heading="Languages">
+    <s-page>
+      <AppHero title="Languages" subtitle="Enable, publish and manage the languages your storefront offers." emoji="🗣️" />
       <s-section heading="Add a language">
         {addable.length === 0 ? (
           <p>All available locales are already enabled on this shop.</p>

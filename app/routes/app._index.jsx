@@ -2,6 +2,7 @@ import { Link, useLoaderData } from "react-router";
 import { authenticate } from "../shopify.server";
 import { listShopLocales } from "../lib/shopify-translations.server";
 import db from "../db.server";
+import { AppHero, StatTile, Card, Badge } from "../components/ui";
 
 export async function loader({ request }) {
   const { admin, session } = await authenticate.admin(request);
@@ -16,7 +17,7 @@ export async function loader({ request }) {
   return { shopLocales, recentJobs };
 }
 
-const STATUS_COLORS = { completed: "#1a7f37", running: "#b45309", failed: "#c0392b" };
+const STATUS_TONE = { completed: "success", running: "warning", failed: "critical" };
 
 export default function Dashboard() {
   const { shopLocales, recentJobs } = useLoaderData();
@@ -24,131 +25,92 @@ export default function Dashboard() {
   const totalWords = recentJobs.reduce((sum, j) => sum + (j.wordsTranslated ?? 0), 0);
 
   return (
-    <s-page heading="Translator">
-      {/* ── Stats row ── */}
-      <s-section heading="Overview">
-        <s-stack direction="inline" gap="loose">
-          <div style={statCard}>
-            <div style={statNumber}>{shopLocales.length}</div>
-            <div style={statLabel}>Languages enabled</div>
-          </div>
-          <div style={statCard}>
-            <div style={statNumber}>{publishedCount}</div>
-            <div style={statLabel}>Published to storefront</div>
-          </div>
-          <div style={statCard}>
-            <div style={statNumber}>{totalWords.toLocaleString()}</div>
-            <div style={statLabel}>Words translated (all-time)</div>
-          </div>
-        </s-stack>
+    <s-page>
+      <AppHero
+        title="Translate your entire store"
+        subtitle="AI-powered translation for products, theme UI, collections, pages, metafields and more — into every language, automatically."
+        emoji="🌐"
+      />
 
-        <s-stack direction="inline" gap="base" style={{ marginTop: "16px" }}>
-          <Link to="/app/languages">
-            <s-button variant="primary">Manage languages</s-button>
-          </Link>
-          <Link to="/app/translate">
-            <s-button variant="secondary">Translate content</s-button>
-          </Link>
-          <Link to="/app/markets">
-            <s-button variant="secondary">Markets & Currency</s-button>
-          </Link>
-          <Link to="/app/glossary">
-            <s-button variant="secondary">Glossary</s-button>
-          </Link>
-          <Link to="/app/settings">
-            <s-button variant="secondary">Settings</s-button>
-          </Link>
-        </s-stack>
-      </s-section>
+      {/* Stats */}
+      <div style={row}>
+        <StatTile value={shopLocales.length} label="Languages enabled" accent="#00a08e" emoji="🗣️" />
+        <StatTile value={publishedCount} label="Published to storefront" accent="#1c5fbf" emoji="🚀" />
+        <StatTile value={totalWords.toLocaleString()} label="Words translated" accent="#7a4fd0" emoji="✨" />
+      </div>
 
-      {/* ── Feature callouts ── */}
-      <s-section heading="What this app does">
-        <s-stack direction="block" gap="base">
-          <FeatureRow
-            icon="🌐"
-            title="AI-powered translations"
-            desc="Translates products, collections, pages, blog posts, theme UI strings, metafields, and shop policies using Claude."
-          />
-          <FeatureRow
-            icon="📍"
-            title="Geo-detection & redirect"
-            desc="The storefront Country Selector block auto-detects the visitor's country and redirects them to the correct language. Add the block via the theme editor."
-          />
-          <FeatureRow
-            icon="💱"
-            title=".99 price rounding"
-            desc='Automatically rounds foreign-currency prices to the nearest X.99 (e.g. €19.99 instead of €20.00). Configured per market in the Markets & Currency page.'
-          />
-          <FeatureRow
-            icon="🧩"
-            title="Third-party app content"
-            desc="Translates metafields and metaobjects used by apps like Kaching Bundles, review apps, and post-purchase extensions."
-          />
-        </s-stack>
-      </s-section>
+      {/* Quick actions */}
+      <div style={{ ...row, marginTop: 14, marginBottom: 20, flexWrap: "wrap" }}>
+        <Link to="/app/translate"><s-button variant="primary">Translate content</s-button></Link>
+        <Link to="/app/languages"><s-button variant="secondary">Manage languages</s-button></Link>
+        <Link to="/app/markets"><s-button variant="secondary">Markets & Currency</s-button></Link>
+        <Link to="/app/review"><s-button variant="secondary">Review</s-button></Link>
+        <Link to="/app/glossary"><s-button variant="secondary">Glossary</s-button></Link>
+        <Link to="/app/settings"><s-button variant="secondary">Settings</s-button></Link>
+      </div>
 
-      {/* ── Recent jobs ── */}
-      <s-section heading="Recent translation jobs">
+      {/* Features */}
+      <div style={grid}>
+        <FeatureCard emoji="🤖" accent="#00a08e" title="AI-powered translations"
+          desc="Products, collections, pages, blogs, theme UI strings, metafields and shop policies — translated by Claude." />
+        <FeatureCard emoji="📍" accent="#1c5fbf" title="Geo-detect & redirect"
+          desc="The storefront selector auto-detects a visitor's country and switches to their language and currency." />
+        <FeatureCard emoji="💱" accent="#9a6a00" title=".99 price rounding"
+          desc="Rounds converted prices to a natural value per market — €19.99 instead of €20.00." />
+        <FeatureCard emoji="🧩" accent="#7a4fd0" title="3rd-party app content"
+          desc="Translates metafields & metaobjects from apps like bundles, reviews and upsells." />
+      </div>
+
+      {/* Recent jobs */}
+      <Card style={{ marginTop: 18 }}>
+        <div style={cardTitle}>Recent translation jobs</div>
         {recentJobs.length === 0 ? (
-          <p>No translation jobs yet. Head to Translate content to run your first batch.</p>
+          <p style={{ color: "var(--p-color-text-secondary,#6d7175)", margin: "8px 0 0" }}>
+            No translation jobs yet — head to <Link to="/app/translate">Translate content</Link> to run your first.
+          </p>
         ) : (
-          <table style={{ width: "100%", borderCollapse: "collapse" }}>
-            <thead>
-              <tr style={{ borderBottom: "1px solid #e0e0e0" }}>
-                <Th>Locale</Th>
-                <Th>Type</Th>
-                <Th>Status</Th>
-                <Th>Words</Th>
-                <Th>When</Th>
-              </tr>
-            </thead>
-            <tbody>
-              {recentJobs.map((job) => (
-                <tr key={job.id} style={{ borderBottom: "1px solid #f0f0f0" }}>
-                  <Td>{job.targetLocale}</Td>
-                  <Td>{job.resourceType}</Td>
-                  <Td>
-                    <span style={{ color: STATUS_COLORS[job.status] ?? "#666", fontWeight: 500 }}>
-                      {job.status}
-                    </span>
-                  </Td>
-                  <Td>{(job.wordsTranslated ?? 0).toLocaleString()}</Td>
-                  <Td>{new Date(job.createdAt).toLocaleString()}</Td>
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 520 }}>
+              <thead>
+                <tr style={{ borderBottom: "1px solid var(--p-color-border,#e1e3e5)" }}>
+                  <Th>Languages</Th><Th>Type</Th><Th>Status</Th><Th>Words</Th><Th>When</Th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {recentJobs.map((job) => (
+                  <tr key={job.id} style={{ borderBottom: "1px solid var(--p-color-border,#f1f2f3)" }}>
+                    <Td>{job.targetLocale}</Td>
+                    <Td>{job.resourceType}</Td>
+                    <Td><Badge tone={STATUS_TONE[job.status] || "default"}>{job.status}</Badge></Td>
+                    <Td>{(job.wordsTranslated ?? 0).toLocaleString()}</Td>
+                    <Td>{new Date(job.createdAt).toLocaleString()}</Td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
-      </s-section>
+      </Card>
     </s-page>
   );
 }
 
-function FeatureRow({ icon, title, desc }) {
+function FeatureCard({ emoji, title, desc, accent }) {
   return (
-    <div style={{ display: "flex", gap: "12px", alignItems: "flex-start" }}>
-      <span style={{ fontSize: "20px", lineHeight: 1 }}>{icon}</span>
-      <div>
-        <strong>{title}</strong>
-        <p style={{ margin: "2px 0 0", color: "#555" }}>{desc}</p>
+    <Card>
+      <div style={{ display: "flex", gap: 12, alignItems: "flex-start" }}>
+        <span style={{ fontSize: 20, width: 40, height: 40, display: "grid", placeItems: "center", borderRadius: 11, background: accent + "1a", flex: "none" }}>{emoji}</span>
+        <div>
+          <strong style={{ fontSize: 15 }}>{title}</strong>
+          <p style={{ margin: "3px 0 0", color: "var(--p-color-text-secondary,#6d7175)", fontSize: 13, lineHeight: 1.5 }}>{desc}</p>
+        </div>
       </div>
-    </div>
+    </Card>
   );
 }
 
-function Th({ children }) {
-  return <th style={{ textAlign: "left", padding: "8px 12px", fontSize: "13px", color: "#666" }}>{children}</th>;
-}
-function Td({ children }) {
-  return <td style={{ padding: "8px 12px", fontSize: "14px" }}>{children}</td>;
-}
-
-const statCard = {
-  background: "#f6f6f7",
-  borderRadius: "8px",
-  padding: "16px 24px",
-  minWidth: "140px",
-  textAlign: "center",
-};
-const statNumber = { fontSize: "28px", fontWeight: "700", lineHeight: 1.2 };
-const statLabel = { fontSize: "13px", color: "#666", marginTop: "4px" };
+const row = { display: "flex", gap: 14 };
+const grid = { display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(280px,1fr))", gap: 14 };
+const cardTitle = { fontSize: 15, fontWeight: 640, marginBottom: 10 };
+function Th({ children }) { return <th style={{ textAlign: "left", padding: "8px 12px", fontSize: 13, color: "var(--p-color-text-secondary,#6d7175)" }}>{children}</th>; }
+function Td({ children }) { return <td style={{ padding: "8px 12px", fontSize: 14 }}>{children}</td>; }

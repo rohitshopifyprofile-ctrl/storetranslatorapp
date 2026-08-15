@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { AppHero } from "../components/ui";
 import { useLoaderData, useFetcher } from "react-router";
 import { authenticate } from "../shopify.server";
 import {
@@ -78,7 +79,8 @@ export default function Markets() {
   const isLoading = fetcher.state !== "idle";
 
   return (
-    <s-page heading="Markets & Currency">
+    <s-page>
+      <AppHero title="Markets & Currency" subtitle="Per-market languages and .99 price rounding for foreign currencies." emoji="💱" />
       <s-section heading="What this page does">
         <p>
           Shopify Markets lets you sell to different countries with localized pricing and currency.
