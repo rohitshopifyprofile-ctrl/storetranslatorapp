@@ -63,9 +63,11 @@ export async function getResourcePending(admin, resourceId, locale) {
 // A field needs translating if it has real source text and either has no
 // translation, is outdated, OR its stored "translation" still equals the source
 // (English-pollution left by an earlier failed run — re-translate it).
-function isFieldPending(content, current) {
+// overwrite=true re-translates every real-text field regardless of existing.
+function isFieldPending(content, current, overwrite = false) {
   if (SKIP_KEYS.has(content.key)) return false;
   if (!content.value || content.value.trim().length === 0) return false;
+  if (overwrite) return true;
   if (!current || current.outdated) return true;
   if (current.value === content.value && /[A-Za-z]{3}/.test(content.value)) return true;
   return false;
@@ -73,7 +75,7 @@ function isFieldPending(content, current) {
 
 // Returns only the resources/fields that still need a translation (or whose
 // translation is outdated because the source content changed since).
-export async function getUntranslatedContent(admin, { resourceType, locale, first = 20, after = null }) {
+export async function getUntranslatedContent(admin, { resourceType, locale, first = 20, after = null, overwrite = false }) {
   const response = await admin.graphql(TRANSLATABLE_CONTENT_QUERY, {
     variables: { resourceType, locale, first, after },
   });
@@ -83,7 +85,7 @@ export async function getUntranslatedContent(admin, { resourceType, locale, firs
   const resources = connection.nodes
     .map((node) => {
       const existing = new Map(node.translations.map((t) => [t.key, t]));
-      const pending = node.translatableContent.filter((content) => isFieldPending(content, existing.get(content.key)));
+      const pending = node.translatableContent.filter((content) => isFieldPending(content, existing.get(content.key), overwrite));
       return { resourceId: node.resourceId, pending };
     })
     .filter((r) => r.pending.length > 0);

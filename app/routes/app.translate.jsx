@@ -70,7 +70,8 @@ export async function loader({ request }) {
         errorMessage: job.errorMessage,
       }
     : null;
-  return { locale, resourceTypes: RESOURCE_TYPES, shopLocales: nonPrimaryLocales, initialJob };
+  const provider = process.env.TRANSLATION_PROVIDER === "deepl" ? "DeepL" : "Claude";
+  return { locale, resourceTypes: RESOURCE_TYPES, shopLocales: nonPrimaryLocales, initialJob, provider };
 }
 
 export async function action({ request }) {
@@ -91,6 +92,7 @@ export async function action({ request }) {
     // Optional locale scope: comma-separated list from the language picker.
     const localesRaw = formData.get("locales");
     const onlyLocales = localesRaw ? String(localesRaw).split(",").map((s) => s.trim()).filter(Boolean) : null;
+    const overwrite = formData.get("overwrite") === "true";
     const job = await db.translationJob.create({
       data: {
         shop: session.shop,
@@ -99,7 +101,7 @@ export async function action({ request }) {
         status: "running",
       },
     });
-    translateWholeStore(admin, session.shop, job.id, onlyLocales).catch(async (error) => {
+    translateWholeStore(admin, session.shop, job.id, onlyLocales, overwrite).catch(async (error) => {
       await db.translationJob
         .update({ where: { id: job.id }, data: { status: "failed", errorMessage: String(error?.message || error) } })
         .catch(() => {});
@@ -199,6 +201,15 @@ export async function action({ request }) {
   }
 }
 
+// Flag emoji per locale (language → a representative region). Falls back to 🌐.
+const FLAGS = {
+  en: "🇬🇧", "en-US": "🇺🇸", fr: "🇫🇷", de: "🇩🇪", "de-AT": "🇦🇹", es: "🇪🇸", "es-MX": "🇲🇽",
+  it: "🇮🇹", nl: "🇳🇱", sv: "🇸🇪", nb: "🇳🇴", no: "🇳🇴", da: "🇩🇰", fi: "🇫🇮", pt: "🇵🇹",
+  "pt-BR": "🇧🇷", pl: "🇵🇱", cs: "🇨🇿", ja: "🇯🇵", "zh-CN": "🇨🇳", "zh-TW": "🇹🇼", ko: "🇰🇷",
+  ru: "🇷🇺", ar: "🇸🇦", tr: "🇹🇷", hi: "🇮🇳", el: "🇬🇷", he: "🇮🇱", uk: "🇺🇦", ro: "🇷🇴", hu: "🇭🇺",
+};
+const flagFor = (loc) => FLAGS[loc] || FLAGS[loc?.split("-")[0]] || "🌐";
+
 // Group resource types for the select options
 function groupedTypes(types) {
   const groups = {};
@@ -210,15 +221,17 @@ function groupedTypes(types) {
 }
 
 export default function Translate() {
-  const { locale, resourceTypes, shopLocales, initialJob } = useLoaderData();
+  const { locale, resourceTypes, shopLocales, initialJob, provider } = useLoaderData();
   const fetcher = useFetcher();
   const progress = useFetcher();
   const [targetLocale, setTargetLocale] = useState(locale || shopLocales[0]?.locale || "");
   const [resourceType, setResourceType] = useState(resourceTypes[0].value);
   // Which languages the whole-store sweep should cover (default: all).
   const [sweepLocales, setSweepLocales] = useState(() => shopLocales.map((l) => l.locale));
+  const [overwrite, setOverwrite] = useState(false);
   const toggleSweepLocale = (loc) =>
     setSweepLocales((prev) => (prev.includes(loc) ? prev.filter((l) => l !== loc) : [...prev, loc]));
+  const allSelected = sweepLocales.length === shopLocales.length && shopLocales.length > 0;
 
   const isRunning = fetcher.state !== "idle";
   const result = fetcher.data;
@@ -241,51 +254,75 @@ export default function Translate() {
   return (
     <s-page heading="Translate content">
       <s-section heading="Translate whole store">
-        <p style={{ color: "#555", marginBottom: "12px" }}>
-          Translate <strong>all content</strong> — products, product-page templates, buttons &amp;
-          checkout labels (theme UI), collections, pages, policies, and 3rd-party app content
-          (metafields &amp; metaobjects) — into the languages you pick below.
-        </p>
-
-        <div style={{ marginBottom: 12 }}>
-          <label style={labelStyle}>Languages to translate</label>
-          <div style={{ display: "flex", flexWrap: "wrap", gap: "8px 16px", marginBottom: 8 }}>
-            {shopLocales.map((l) => (
-              <label key={l.locale} style={{ display: "inline-flex", alignItems: "center", gap: 6, cursor: "pointer" }}>
-                <input
-                  type="checkbox"
-                  checked={sweepLocales.includes(l.locale)}
-                  onChange={() => toggleSweepLocale(l.locale)}
-                />
-                <span>{l.name} ({l.locale})</span>
-              </label>
-            ))}
-          </div>
-          <span style={{ display: "inline-flex", gap: 10, fontSize: 12 }}>
-            <a href="#" onClick={(e) => { e.preventDefault(); setSweepLocales(shopLocales.map((l) => l.locale)); }}>Select all</a>
-            <a href="#" onClick={(e) => { e.preventDefault(); setSweepLocales([]); }}>Clear</a>
-          </span>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12 }}>
+          <p style={{ color: "var(--p-color-text-secondary, #6d7175)", marginTop: 0, marginBottom: 16, maxWidth: 640 }}>
+            Translate <strong>all content</strong> — products, product-page templates, buttons &amp;
+            checkout labels (theme UI), collections, pages, policies, and 3rd-party app content
+            (metafields &amp; metaobjects) — into the languages you pick.
+          </p>
+          <span style={engineBadge}>✦ AI engine · {provider === "DeepL" ? "DeepL" : "Claude"}</span>
         </div>
 
-        <s-button
-          variant="primary"
-          disabled={isRunning || sweepLocales.length === 0}
-          onClick={() =>
-            fetcher.submit(
-              { intent: "translate_whole_store", locales: sweepLocales.join(",") },
-              { method: "post" }
-            )
-          }
-        >
-          {isRunning
-            ? "Starting…"
-            : jobRunning
-            ? "Restart / resume"
-            : `Translate ${sweepLocales.length} language${sweepLocales.length === 1 ? "" : "s"}`}
-        </s-button>
+        {/* Language selection — flag grid + select all */}
+        <div style={sectionLabel}>Languages</div>
+        <label style={{ ...langRow, fontWeight: 600, borderBottom: "1px solid var(--p-color-border, #e1e3e5)", borderRadius: 0, marginBottom: 8, paddingBottom: 12 }}>
+          <input
+            type="checkbox"
+            checked={allSelected}
+            ref={(el) => { if (el) el.indeterminate = !allSelected && sweepLocales.length > 0; }}
+            onChange={() => setSweepLocales(allSelected ? [] : shopLocales.map((l) => l.locale))}
+          />
+          Select all languages
+        </label>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(185px, 1fr))", gap: "6px 12px", marginBottom: 4 }}>
+          {shopLocales.map((l) => {
+            const on = sweepLocales.includes(l.locale);
+            return (
+              <label key={l.locale} style={{ ...langRow, background: on ? "var(--p-color-bg-surface-success, #eef7f3)" : "transparent" }}>
+                <input type="checkbox" checked={on} onChange={() => toggleSweepLocale(l.locale)} />
+                <span style={{ fontSize: 16, lineHeight: 1 }}>{flagFor(l.locale)}</span>
+                <span style={{ fontWeight: 500 }}>{l.name}</span>
+                <span style={{ color: "var(--p-color-text-secondary, #6d7175)", fontSize: 12 }}>{l.locale}</span>
+              </label>
+            );
+          })}
+        </div>
+
+        {/* Overwrite option */}
+        <div style={{ marginTop: 16, paddingTop: 14, borderTop: "1px solid var(--p-color-border, #e1e3e5)" }}>
+          <label style={{ display: "inline-flex", alignItems: "center", gap: 9, cursor: "pointer", fontWeight: 500 }}>
+            <input type="checkbox" checked={overwrite} onChange={(e) => setOverwrite(e.target.checked)} />
+            Overwrite existing translations
+          </label>
+          <div style={{ color: "var(--p-color-text-secondary, #6d7175)", fontSize: 12, margin: "3px 0 0 25px" }}>
+            Re-translate fields that already have a translation — fixes anything stuck in the source language.
+          </div>
+        </div>
+
+        <div style={{ display: "flex", alignItems: "center", gap: 14, marginTop: 18, flexWrap: "wrap" }}>
+          <s-button
+            variant="primary"
+            disabled={isRunning || sweepLocales.length === 0}
+            onClick={() =>
+              fetcher.submit(
+                { intent: "translate_whole_store", locales: sweepLocales.join(","), overwrite: String(overwrite) },
+                { method: "post" }
+              )
+            }
+          >
+            {isRunning
+              ? "Starting…"
+              : jobRunning
+              ? "Restart / resume"
+              : `Translate ${sweepLocales.length} language${sweepLocales.length === 1 ? "" : "s"}`}
+          </s-button>
+          <span style={{ fontSize: 13, color: "var(--p-color-text-secondary, #6d7175)" }}>
+            New &amp; edited products auto-translate going forward.
+          </span>
+        </div>
         {jobRunning && (
-          <p style={{ marginTop: 6, fontSize: 12, color: "#666" }}>
-            A run is in progress below. If the bar stops advancing for a while, click{" "}
+          <p style={{ marginTop: 8, fontSize: 12, color: "var(--p-color-text-secondary, #6d7175)" }}>
+            A run is in progress below. If the bar stalls for a few minutes, click{" "}
             <strong>Restart / resume</strong> — it picks up where it left off.
           </p>
         )}
@@ -421,3 +458,16 @@ export default function Translate() {
 
 const labelStyle = { display: "block", marginBottom: "4px", fontWeight: 500 };
 const inputStyle = { padding: "8px", width: "100%", maxWidth: "420px", display: "block" };
+const engineBadge = {
+  display: "inline-flex", alignItems: "center", gap: 6, whiteSpace: "nowrap",
+  background: "var(--p-color-bg-surface-success, #eef7f3)", color: "var(--p-color-text-success, #008060)",
+  fontSize: 12, fontWeight: 600, padding: "5px 10px", borderRadius: 20,
+};
+const sectionLabel = {
+  fontSize: 12, fontWeight: 600, textTransform: "uppercase", letterSpacing: ".05em",
+  color: "var(--p-color-text-secondary, #6d7175)", margin: "4px 0 10px",
+};
+const langRow = {
+  display: "flex", alignItems: "center", gap: 9, fontSize: 14,
+  padding: "7px 9px", borderRadius: 8, cursor: "pointer",
+};

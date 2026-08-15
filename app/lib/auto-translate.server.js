@@ -133,7 +133,7 @@ export async function autoTranslateResource(admin, shop, resourceId) {
 // Sweep the store: every content type × the chosen published languages.
 // onlyLocales (array) scopes the run to specific languages; null = all.
 // Long-running; call as a background job. Records progress on a TranslationJob.
-export async function translateWholeStore(admin, shop, jobId = null, onlyLocales = null) {
+export async function translateWholeStore(admin, shop, jobId = null, onlyLocales = null, overwrite = false) {
   const sourceLocale = await shopSourceLocale(shop);
   let targets = await publishedTargetLocales(admin);
   if (onlyLocales && onlyLocales.length > 0) {
@@ -162,7 +162,7 @@ export async function translateWholeStore(admin, shop, jobId = null, onlyLocales
           // Timeout the query so a huge/slow resource (e.g. the giant theme
           // node) can never hang the whole sweep — skip and move on instead.
           const { resources, hasNextPage, endCursor } = await withTimeout(
-            getUntranslatedContent(admin, { resourceType, locale, first: 10, after }),
+            getUntranslatedContent(admin, { resourceType, locale, first: 10, after, overwrite }),
             90000,
             `${resourceType}/${locale} query`,
           );
