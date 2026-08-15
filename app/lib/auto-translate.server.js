@@ -110,16 +110,21 @@ async function translateAndRegister(admin, shop, resourceId, pending, sourceLoca
   return countWords(translatedFields);
 }
 
-// Translate a single resource (by gid) into every published language.
-// Used by the products webhook. Best-effort: logs and continues on per-locale errors.
-export async function autoTranslateResource(admin, shop, resourceId) {
+// Translate a single resource (by gid) into published languages.
+// onlyLocales scopes to specific languages; null = all. Used by the products
+// webhook (all) and the "translate one product" action (scoped).
+export async function autoTranslateResource(admin, shop, resourceId, onlyLocales = null, overwrite = false) {
   const sourceLocale = await shopSourceLocale(shop);
-  const targets = await publishedTargetLocales(admin);
+  let targets = await publishedTargetLocales(admin);
+  if (onlyLocales && onlyLocales.length > 0) {
+    const want = new Set(onlyLocales);
+    targets = targets.filter((l) => want.has(l));
+  }
   let words = 0;
 
   for (const locale of targets) {
     try {
-      const res = await getResourcePending(admin, resourceId, locale);
+      const res = await getResourcePending(admin, resourceId, locale, overwrite);
       if (res && res.pending.length > 0) {
         words += await translateAndRegister(admin, shop, resourceId, res.pending, sourceLocale, locale);
       }

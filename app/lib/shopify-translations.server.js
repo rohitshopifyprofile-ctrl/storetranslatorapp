@@ -47,7 +47,7 @@ const TRANSLATABLE_RESOURCE_QUERY = `#graphql
 // Pending translatable fields for a SINGLE resource (used by webhooks to
 // translate one product/collection/etc.). Returns { resourceId, pending } or
 // null if the resource has no translatable content.
-export async function getResourcePending(admin, resourceId, locale) {
+export async function getResourcePending(admin, resourceId, locale, overwrite = false) {
   const response = await admin.graphql(TRANSLATABLE_RESOURCE_QUERY, {
     variables: { resourceId, locale },
   });
@@ -56,7 +56,7 @@ export async function getResourcePending(admin, resourceId, locale) {
   if (!node) return null;
 
   const existing = new Map(node.translations.map((t) => [t.key, t]));
-  const pending = node.translatableContent.filter((content) => isFieldPending(content, existing.get(content.key)));
+  const pending = node.translatableContent.filter((content) => isFieldPending(content, existing.get(content.key), overwrite));
   return { resourceId: node.resourceId, pending };
 }
 
@@ -71,6 +71,24 @@ function isFieldPending(content, current, overwrite = false) {
   if (!current || current.outdated) return true;
   if (current.value === content.value && /[A-Za-z]{3}/.test(content.value)) return true;
   return false;
+}
+
+// Preview: source vs translated text for a single resource in one locale.
+// Returns [{ key, source, translated }] for real-text fields (title/description
+// first). Used by the "translate one product" preview.
+export async function getResourceReview(admin, resourceId, locale) {
+  const response = await admin.graphql(TRANSLATABLE_RESOURCE_QUERY, {
+    variables: { resourceId, locale },
+  });
+  const { data } = await response.json();
+  const node = data.translatableResource;
+  if (!node) return [];
+  const existing = new Map(node.translations.map((t) => [t.key, t]));
+  const order = { title: 0, body_html: 1, meta_title: 2, meta_description: 3 };
+  return node.translatableContent
+    .filter((c) => !SKIP_KEYS.has(c.key) && c.value && c.value.trim().length > 0)
+    .map((c) => ({ key: c.key, source: c.value, translated: existing.get(c.key)?.value ?? null }))
+    .sort((a, b) => (order[a.key] ?? 9) - (order[b.key] ?? 9));
 }
 
 // Returns only the resources/fields that still need a translation (or whose

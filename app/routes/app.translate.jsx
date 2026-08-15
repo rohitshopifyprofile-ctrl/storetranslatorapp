@@ -6,9 +6,10 @@ import {
   registerTranslations,
   listShopLocales,
   getShopGid,
+  getResourceReview,
 } from "../lib/shopify-translations.server";
 import { translateFields, countWords } from "../lib/translation-provider.server";
-import { translateWholeStore } from "../lib/auto-translate.server";
+import { translateWholeStore, autoTranslateResource } from "../lib/auto-translate.server";
 import { reportWordsTranslated } from "../lib/billing-events.server";
 import { glossaryForLocale } from "../lib/glossary.server";
 import db from "../db.server";
@@ -51,6 +52,7 @@ const BATCH_SIZE = 10;
 
 export async function loader({ request }) {
   const { admin, session } = await authenticate.admin(request);
+  const shop = session.shop;
   const url = new URL(request.url);
   const locale = url.searchParams.get("locale") || "";
   const shopLocales = await listShopLocales(admin);
@@ -71,7 +73,7 @@ export async function loader({ request }) {
       }
     : null;
   const provider = process.env.TRANSLATION_PROVIDER === "deepl" ? "DeepL" : "Claude";
-  return { locale, resourceTypes: RESOURCE_TYPES, shopLocales: nonPrimaryLocales, initialJob, provider };
+  return { locale, resourceTypes: RESOURCE_TYPES, shopLocales: nonPrimaryLocales, initialJob, provider, shop };
 }
 
 export async function action({ request }) {
@@ -107,6 +109,31 @@ export async function action({ request }) {
         .catch(() => {});
     });
     return { ok: true, sweepStarted: true };
+  }
+
+  // Translate ONE product (small, so we run it inline and return a preview).
+  if (intent === "translate_one_product") {
+    const productId = formData.get("productId");
+    const handle = formData.get("handle") || "";
+    const localesRaw = formData.get("locales");
+    const onlyLocales = localesRaw ? String(localesRaw).split(",").map((s) => s.trim()).filter(Boolean) : null;
+    const overwrite = formData.get("overwrite") === "true";
+    if (!productId) return { ok: false, error: "Pick a product first." };
+    try {
+      await autoTranslateResource(admin, session.shop, productId, onlyLocales, overwrite);
+      const locales =
+        onlyLocales && onlyLocales.length
+          ? onlyLocales
+          : (await listShopLocales(admin)).filter((l) => !l.primary).map((l) => l.locale);
+      const preview = [];
+      for (const loc of locales) {
+        const fields = await getResourceReview(admin, productId, loc);
+        preview.push({ locale: loc, fields: fields.slice(0, 3) });
+      }
+      return { ok: true, productTranslated: true, handle, preview };
+    } catch (error) {
+      return { ok: false, error: String(error?.message || error) };
+    }
   }
 
   const targetLocale = formData.get("locale");
@@ -210,6 +237,13 @@ const FLAGS = {
 };
 const flagFor = (loc) => FLAGS[loc] || FLAGS[loc?.split("-")[0]] || "🌐";
 
+const KEY_LABELS = { title: "Title", body_html: "Description", meta_title: "SEO title", meta_description: "SEO description", handle: "Handle" };
+function stripHtml(s, n = 120) {
+  if (!s) return "";
+  const t = s.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+  return t.length > n ? t.slice(0, n) + "…" : t;
+}
+
 // Group resource types for the select options
 function groupedTypes(types) {
   const groups = {};
@@ -221,9 +255,20 @@ function groupedTypes(types) {
 }
 
 export default function Translate() {
-  const { locale, resourceTypes, shopLocales, initialJob, provider } = useLoaderData();
+  const { locale, resourceTypes, shopLocales, initialJob, provider, shop } = useLoaderData();
   const fetcher = useFetcher();
   const progress = useFetcher();
+  const productFetcher = useFetcher();
+  const [selectedProduct, setSelectedProduct] = useState(null); // { id, handle, title }
+  const productRunning = productFetcher.state !== "idle";
+  const productResult = productFetcher.data;
+
+  async function pickProduct() {
+    try {
+      const sel = await window.shopify.resourcePicker({ type: "product", multiple: false, action: "select" });
+      if (sel && sel.length) setSelectedProduct({ id: sel[0].id, handle: sel[0].handle, title: sel[0].title });
+    } catch (_) { /* picker dismissed */ }
+  }
   const [targetLocale, setTargetLocale] = useState(locale || shopLocales[0]?.locale || "");
   const [resourceType, setResourceType] = useState(resourceTypes[0].value);
   // Which languages the whole-store sweep should cover (default: all).
@@ -356,6 +401,76 @@ export default function Translate() {
           <s-banner tone="critical">
             <p>Translation stopped: {job.errorMessage || "unknown error"}. Click Translate whole store to resume.</p>
           </s-banner>
+        )}
+      </s-section>
+
+      {/* ── Translate a single product (with preview) ── */}
+      <s-section heading="Translate a single product">
+        <p style={{ color: "var(--p-color-text-secondary, #6d7175)", marginTop: 0, marginBottom: 14, maxWidth: 640 }}>
+          Just need one product done (not the whole theme)? Pick a product and translate only its
+          content into the languages selected above — then preview the result before anyone sees it.
+        </p>
+
+        <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+          <s-button variant="secondary" onClick={pickProduct}>
+            {selectedProduct ? "Change product" : "Choose product"}
+          </s-button>
+          {selectedProduct && (
+            <span style={{ fontSize: 14 }}>
+              <strong>{selectedProduct.title}</strong>
+            </span>
+          )}
+          <s-button
+            variant="primary"
+            disabled={!selectedProduct || productRunning || sweepLocales.length === 0}
+            onClick={() =>
+              productFetcher.submit(
+                {
+                  intent: "translate_one_product",
+                  productId: selectedProduct.id,
+                  handle: selectedProduct.handle || "",
+                  locales: sweepLocales.join(","),
+                  overwrite: String(overwrite),
+                },
+                { method: "post" }
+              )
+            }
+          >
+            {productRunning ? "Translating…" : `Translate this product`}
+          </s-button>
+        </div>
+
+        {productResult && !productResult.ok && (
+          <s-banner tone="critical"><p>{productResult.error}</p></s-banner>
+        )}
+
+        {productResult?.ok && productResult.productTranslated && (
+          <div style={{ marginTop: 18 }}>
+            <div style={sectionLabel}>Preview</div>
+            {productResult.preview.map((p) => (
+              <div key={p.locale} style={{ border: "1px solid var(--p-color-border, #e1e3e5)", borderRadius: 10, padding: "12px 14px", marginBottom: 10 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                  <span style={{ fontWeight: 600 }}>{flagFor(p.locale)} {p.locale}</span>
+                  {productResult.handle && (
+                    <a href={`https://${shop}/${p.locale}/products/${productResult.handle}`} target="_blank" rel="noreferrer" style={{ fontSize: 13 }}>
+                      View on storefront →
+                    </a>
+                  )}
+                </div>
+                {p.fields.length === 0 ? (
+                  <p style={{ fontSize: 13, color: "var(--p-color-text-secondary, #6d7175)", margin: 0 }}>No translatable text.</p>
+                ) : (
+                  p.fields.map((f) => (
+                    <div key={f.key} style={{ display: "grid", gridTemplateColumns: "90px 1fr 1fr", gap: 10, fontSize: 13, padding: "4px 0", borderTop: "1px solid var(--p-color-border, #f1f2f3)" }}>
+                      <span style={{ color: "var(--p-color-text-secondary, #6d7175)" }}>{KEY_LABELS[f.key] || f.key}</span>
+                      <span style={{ color: "var(--p-color-text-secondary, #6d7175)" }}>{stripHtml(f.source)}</span>
+                      <span style={{ color: f.translated ? "inherit" : "#b12a2a" }}>{f.translated ? stripHtml(f.translated) : "not translated"}</span>
+                    </div>
+                  ))
+                )}
+              </div>
+            ))}
+          </div>
         )}
       </s-section>
 
