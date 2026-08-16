@@ -23,6 +23,24 @@ export async function translateFields({ texts, sourceLocale, targetLocale, gloss
 // separately, then stitch the results back together in order.
 const MAX_CHARS_PER_CHUNK = 6000;
 const CLAUDE_MAX_TOKENS = 8192;
+// How many translation requests to run at once. The big speed lever — a resource
+// with many chunks (theme) translates ~Nx faster. Kept modest to stay under
+// Anthropic rate limits (each call retries on 429). Override with TRANSLATION_CONCURRENCY.
+const CONCURRENCY = Math.max(1, parseInt(process.env.TRANSLATION_CONCURRENCY || "5", 10) || 5);
+
+// Run `fn` over items with at most `limit` in flight; results keep input order.
+async function mapLimit(items, limit, fn) {
+  const results = new Array(items.length);
+  let next = 0;
+  async function worker() {
+    while (next < items.length) {
+      const i = next++;
+      results[i] = await fn(items[i], i);
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  return results;
+}
 
 function chunkTexts(texts, maxChars) {
   const chunks = [];
@@ -57,22 +75,24 @@ function parseSegments(raw, n) {
 
 async function translateWithClaude({ texts, sourceLocale, targetLocale, glossary }) {
   const chunks = chunkTexts(texts, MAX_CHARS_PER_CHUNK);
-  const out = [];
-  for (const chunk of chunks) {
-    let values;
+  // Translate chunks concurrently (order preserved) — the main speedup.
+  const perChunk = await mapLimit(chunks, CONCURRENCY, async (chunk) => {
     try {
-      values = await translateChunkWithClaude({ texts: chunk, sourceLocale, targetLocale, glossary });
+      return await translateChunkWithClaude({ texts: chunk, sourceLocale, targetLocale, glossary });
     } catch (error) {
       console.error("[translate] chunk failed:", error?.message || error);
-      values = [];
+      return [];
     }
+  });
+  const out = [];
+  chunks.forEach((chunk, ci) => {
+    const values = perChunk[ci] || [];
     for (let i = 0; i < chunk.length; i++) {
-      // IMPORTANT: on failure use null, NOT the original — registering the source
-      // text as its own "translation" pollutes state and shows English on the
-      // storefront. Null-valued fields are left untranslated (skipped by callers).
+      // On failure use null, NOT the original — registering source-as-translation
+      // pollutes state and shows English. Null fields are left untranslated.
       out.push({ key: chunk[i].key, value: values[i] != null ? values[i] : null });
     }
-  }
+  });
   return out;
 }
 
