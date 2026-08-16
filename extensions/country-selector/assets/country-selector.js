@@ -317,16 +317,29 @@
       var langInput = form.querySelector('select[name="language_code"]');
       if (langInput) langInput.value = target;
 
-      // Also switch country/market for currency, when the detected country is
-      // one this storefront actually offers.
+      // Country handling — this is what prevents the es-fr bug. The form also
+      // carries a country_code <select> whose current value is the market the
+      // visitor is in right now (e.g. FR). If we submit the language WITHOUT
+      // fixing that, Shopify combines them into the wrong locale (es + FR =
+      // /es-fr). So:
+      //   • If the detected country is a real option, select it (routes to that
+      //     country's market — e.g. ES -> /es).
+      //   • Otherwise DROP the country field entirely (remove its name) so only
+      //     the language changes and Shopify's own geolocation keeps the correct
+      //     market, exactly like visiting /es directly.
+      var countryInput = form.querySelector('select[name="country_code"]');
       var matchingCountry = "";
-      if (s.country && availableCountries.indexOf(s.country) !== -1) {
-        matchingCountry = s.country;
-        var countryInput = form.querySelector('select[name="country_code"]');
-        if (countryInput) countryInput.value = matchingCountry;
+      if (s.country && countryInput) {
+        var hasOption = Array.prototype.some.call(countryInput.options, function (o) {
+          return String(o.value).toUpperCase() === s.country;
+        });
+        if (hasOption) { countryInput.value = s.country; matchingCountry = s.country; }
+      }
+      if (!matchingCountry && countryInput) {
+        countryInput.removeAttribute("name"); // don't submit a stale country
       }
 
-      log("SWITCHING", { language: target, via: chosenVia, country: matchingCountry || "(unchanged)" });
+      log("SWITCHING", { language: target, via: chosenVia, country: matchingCountry || "(language only — letting Shopify geo keep the market)" });
       form.submit();
     });
   }
