@@ -1,24 +1,29 @@
 /**
  * Language & Country Selector — Storefront Script
  *
- * Handles:
- *   1. Auto-submit the localization form on <select> change (no button click needed).
- *   2. Geo-detect the visitor's country via window.Shopify.country and auto-redirect
- *      them to the matching locale on their first visit (once only; respects manual
- *      override stored in localStorage).
+ * Responsibilities:
+ *   1. Auto-submit the localization form when the visitor changes the
+ *      language/country <select> (no separate button needed).
+ *   2. Geo-detect the visitor's country on their first visit and switch them to
+ *      the matching language automatically.
+ *
+ * Detection is intentionally multi-signal and defensive — a single source
+ * (Shopify's suggestion endpoint) can be empty or shaped differently across
+ * stores, so we combine it with the browser's own locale and try several
+ * candidate languages before giving up. Every decision is logged (append
+ * ?translator_debug=1 to any storefront URL to see an on-page panel).
  */
 (function () {
   "use strict";
 
   var LOCALE_KEY = "translator_locale";
   var COUNTRY_KEY = "translator_country";
-  // Per-session marker so a single auto-switch attempt doesn't loop. Unlike the
-  // localStorage keys (which record an explicit manual choice), this is
-  // sessionStorage: a failed/partial switch won't permanently block detection.
+  // Per-session marker so one auto-switch attempt can't loop. sessionStorage
+  // (not localStorage) so a failed switch retries in a new session.
   var ATTEMPT_KEY = "translator_auto_attempted";
 
-  // Country ISO → preferred locale. Covers the most common markets; merchants
-  // can extend/override via the block's "Custom country → locale overrides" setting.
+  // Country ISO → preferred language locale. Merchants can extend/override via
+  // the block's "Custom country → locale overrides" setting.
   var DEFAULT_MAP = {
     // French
     FR: "fr", BE: "fr", CH: "fr", LU: "fr", MC: "fr",
@@ -83,8 +88,7 @@
   var availableLocales = config.availableLocales || [];
   var availableCountries = config.availableCountries || [];
 
-  // Merge default map with merchant overrides. The override comes from a theme
-  // setting (a textarea), so it arrives as a JSON *string* — parse it safely.
+  // Merchant override map arrives as a JSON *string* (theme textarea). Parse safely.
   var customMap = {};
   var rawCustomMap = config.customCountryMap;
   if (rawCustomMap && typeof rawCustomMap === "string") {
@@ -94,35 +98,18 @@
   }
   var countryToLocale = Object.assign({}, DEFAULT_MAP, customMap);
 
-  /**
-   * Wire up the <select> elements to auto-submit on change and save preference.
-   */
-  function initSelects() {
-    var form = document.getElementById("translator-localization-form");
-    if (!form) return;
-
-    var selects = form.querySelectorAll("select");
-    selects.forEach(function (sel) {
-      sel.addEventListener("change", function () {
-        if (sel.name === "language_code") {
-          try { localStorage.setItem(LOCALE_KEY, sel.value); } catch (_) {}
-        } else if (sel.name === "country_code") {
-          try { localStorage.setItem(COUNTRY_KEY, sel.value); } catch (_) {}
-        }
-        form.submit();
-      });
-    });
+  // ---- URL flags -----------------------------------------------------------
+  function hasFlag(name) {
+    try { return new RegExp("[?&]" + name + "=1\\b").test(window.location.search); } catch (_) { return false; }
   }
+  var DEBUG = hasFlag("translator_debug");
+  // Clears any saved preference so detection runs fresh (useful for testing).
+  var RESET = hasFlag("translator_reset");
+  // Like reset, but also ignores the "manual choice" guard for this run — forces
+  // a re-detect even if the visitor previously picked a language. Test-only.
+  var FORCE = hasFlag("translator_force");
 
-  // Debug mode: append ?translator_debug=1 to any storefront URL. Logs go to the
-  // browser console AND to a visible on-page panel (bottom-right) so you don't
-  // have to dig through devtools.
-  var DEBUG = false;
-  try { DEBUG = /[?&]translator_debug=1\b/.test(window.location.search); } catch (_) {}
-  // ?translator_reset=1 clears any saved language/country preference so
-  // auto-detect runs fresh — useful for repeat testing without a new incognito.
-  var RESET = false;
-  try { RESET = /[?&]translator_reset=1\b/.test(window.location.search); } catch (_) {}
+  // ---- Debug panel ---------------------------------------------------------
   var _panel = null;
   function debugPanel() {
     if (!DEBUG) return null;
@@ -130,7 +117,7 @@
     var el = document.createElement("div");
     el.id = "translator-debug";
     el.style.cssText =
-      "position:fixed;bottom:10px;right:10px;z-index:2147483000;max-width:380px;max-height:45vh;" +
+      "position:fixed;bottom:10px;right:10px;z-index:2147483000;max-width:400px;max-height:50vh;" +
       "overflow:auto;background:#111;color:#5f5;font:12px/1.45 monospace;padding:10px 12px;" +
       "border-radius:8px;white-space:pre-wrap;box-shadow:0 2px 12px rgba(0,0,0,.4)";
     el.textContent = "[translator debug]\n";
@@ -152,16 +139,16 @@
     }
   }
 
-  // Find the best published locale for a target language. Handles exact matches
-  // ("fr" -> "fr") and region variants ("fr" -> "fr-FR", "pt-BR" -> "pt").
-  function resolveAvailableLocale(target) {
-    if (!target) return null;
-    var t = String(target).toLowerCase();
+  // ---- Locale resolution ---------------------------------------------------
+  // Find the best AVAILABLE locale for a wanted language. Handles exact matches
+  // ("fr" -> "fr"), region variants ("fr" -> "fr-FR", "pt-BR" -> "pt"), and
+  // base-language matches in either direction.
+  function resolveAvailableLocale(want) {
+    if (!want) return null;
+    var t = String(want).toLowerCase();
     var lower = availableLocales.map(function (l) { return String(l).toLowerCase(); });
-    // 1. exact match
     var i = lower.indexOf(t);
     if (i !== -1) return availableLocales[i];
-    // 2. same base language (fr vs fr-FR)
     var base = t.split("-")[0];
     for (var j = 0; j < lower.length; j++) {
       if (lower[j].split("-")[0] === base) return availableLocales[j];
@@ -169,117 +156,172 @@
     return null;
   }
 
-  // Ask Shopify which country/language it detected for THIS visitor by IP.
-  // window.Shopify.country only reflects the currently-active market (defaults
-  // to the shop's setting), so it can't be used for geo-detection — this
-  // endpoint is the supported source of the visitor's real detected location.
-  // https://shopify.dev/docs/storefronts/themes/markets/localization-discovery
-  function fetchDetectedLocalization() {
-    var root = (window.Shopify && window.Shopify.routes && window.Shopify.routes.root) || "/";
-    var url = root +
-      "browsing_context_suggestions.json?country[enabled]=true&language[enabled]=true";
-    log("fetching geo endpoint", url);
-    return fetch(url, { headers: { Accept: "application/json" } })
-      .then(function (r) {
-        log("geo endpoint status", r.status, r.ok ? "OK" : "(not available on this domain)");
-        return r.ok ? r.json() : null;
-      })
-      .catch(function (e) { log("geo fetch failed", String(e)); return null; });
+  // ---- Country normalization ----------------------------------------------
+  // A country object from Shopify may expose its ISO code under different keys
+  // depending on the endpoint/version. Pull out a clean 2-letter uppercase code.
+  function normalizeCountry(obj) {
+    if (!obj) return "";
+    var raw = obj.handle || obj.iso_code || obj.code || obj.country_code || "";
+    raw = String(raw).toUpperCase().trim();
+    return /^[A-Z]{2}$/.test(raw) ? raw : "";
   }
 
-  /**
-   * On the visitor's first visit, ask Shopify what country/language it detected
-   * from their IP, and if we support that language, switch them to it.
-   */
-  function runAutoDetect() {
-    if (!autoDetect) { log("auto-detect disabled"); return; }
+  // The browser's own locale as a fallback signal, e.g. "es-ES" -> { country:
+  // "ES", lang: "es" }. Country hint from the browser is weaker than IP (a
+  // French speaker in Spain), so it's only used as a last resort for language.
+  function browserLocaleHint() {
+    var l = "";
+    try { l = (navigator.languages && navigator.languages[0]) || navigator.language || ""; } catch (_) {}
+    if (!l) return { country: "", lang: "" };
+    var parts = String(l).split("-");
+    return {
+      lang: (parts[0] || "").toLowerCase(),
+      country: parts[1] ? parts[1].toUpperCase() : "",
+    };
+  }
 
-    if (RESET) {
+  // ---- Selects: auto-submit on change -------------------------------------
+  function initSelects() {
+    var form = document.getElementById("translator-localization-form");
+    if (!form) return;
+    var selects = form.querySelectorAll("select");
+    selects.forEach(function (sel) {
+      sel.addEventListener("change", function () {
+        if (sel.name === "language_code") {
+          try { localStorage.setItem(LOCALE_KEY, sel.value); } catch (_) {}
+        } else if (sel.name === "country_code") {
+          try { localStorage.setItem(COUNTRY_KEY, sel.value); } catch (_) {}
+        }
+        form.submit();
+      });
+    });
+  }
+
+  // ---- Geo detection -------------------------------------------------------
+  // Ask Shopify what it detected for THIS visitor (IP-based). window.Shopify.country
+  // only reflects the active market, so it can't be used for detection — this
+  // endpoint is the supported source of the visitor's real location.
+  // https://shopify.dev/docs/storefronts/themes/markets/localization-discovery
+  function fetchDetected() {
+    var root = (window.Shopify && window.Shopify.routes && window.Shopify.routes.root) || "/";
+    // Cache-bust so a CDN-cached English response can't mask a real detection.
+    var url = root + "browsing_context_suggestions.json?country[enabled]=true&language[enabled]=true&_ts=" + Date.now();
+    log("fetching geo endpoint", url);
+
+    var controller = typeof AbortController !== "undefined" ? new AbortController() : null;
+    var timer = controller ? setTimeout(function () { controller.abort(); }, 6000) : null;
+
+    return fetch(url, { headers: { Accept: "application/json" }, signal: controller ? controller.signal : undefined })
+      .then(function (r) {
+        if (timer) clearTimeout(timer);
+        log("geo endpoint status", r.status, r.ok ? "OK" : "(not served on this domain — use the real storefront, not a preview link)");
+        return r.ok ? r.json() : null;
+      })
+      .catch(function (e) {
+        if (timer) clearTimeout(timer);
+        log("geo fetch failed", String(e && e.message ? e.message : e));
+        return null;
+      });
+  }
+
+  // Reduce the endpoint payload + browser hint into detection signals.
+  function extractSignals(data) {
+    var detected = (data && data.detected_values) || {};
+    var suggestion = data && data.suggestions && data.suggestions.length ? data.suggestions[0].parts || {} : {};
+
+    var country =
+      normalizeCountry(detected.country) ||
+      normalizeCountry(suggestion.country) ||
+      "";
+
+    var suggestedLang = "";
+    if (suggestion.language && suggestion.language.handle) suggestedLang = String(suggestion.language.handle).toLowerCase();
+    else if (detected.language && detected.language.handle) suggestedLang = String(detected.language.handle).toLowerCase();
+
+    var hint = browserLocaleHint();
+    if (!country && hint.country) country = hint.country; // last-resort country
+
+    return { country: country, suggestedLang: suggestedLang, browserLang: hint.lang };
+  }
+
+  function runAutoDetect() {
+    if (!autoDetect) { log("auto-detect disabled by theme setting"); return; }
+
+    if (RESET || FORCE) {
       try { localStorage.removeItem(LOCALE_KEY); localStorage.removeItem(COUNTRY_KEY); } catch (_) {}
       try { sessionStorage.removeItem(ATTEMPT_KEY); } catch (_) {}
-      log("reset: cleared saved preference + this session's attempt marker");
+      log(FORCE ? "force: ignoring saved preference + attempt guard" : "reset: cleared saved preference + attempt marker");
     }
 
-    // If the customer has already MANUALLY chosen a language/country, respect it.
-    var savedLocale = null;
-    var savedCountry = null;
-    try {
-      savedLocale = localStorage.getItem(LOCALE_KEY);
-      savedCountry = localStorage.getItem(COUNTRY_KEY);
-    } catch (_) {}
+    if (!FORCE) {
+      var savedLocale = null, savedCountry = null;
+      try { savedLocale = localStorage.getItem(LOCALE_KEY); savedCountry = localStorage.getItem(COUNTRY_KEY); } catch (_) {}
+      if (savedLocale || savedCountry) {
+        log("manual choice found — respecting it, not auto-switching", { savedLocale: savedLocale, savedCountry: savedCountry });
+        return;
+      }
+      var attempted = null;
+      try { attempted = sessionStorage.getItem(ATTEMPT_KEY); } catch (_) {}
+      if (attempted) { log("already attempted this session (target was " + attempted + ")"); return; }
+    }
 
-    if (savedLocale || savedCountry) {
-      log("manual choice found, not auto-switching", { savedLocale: savedLocale, savedCountry: savedCountry });
+    log("context", { currentLocale: currentLocale, currentCountry: currentCountry, availableLocales: availableLocales });
+    if (availableLocales.length < 2) {
+      log("only one language available for this market (" + JSON.stringify(availableLocales) + ") — nothing to switch to. Add the target language to this market in the app's Markets & Currency page.");
       return;
     }
 
-    // Only auto-attempt once per browser session, so a switch that doesn't take
-    // (e.g. on a preview domain) can't loop — but a new session still retries.
-    var attempted = null;
-    try { attempted = sessionStorage.getItem(ATTEMPT_KEY); } catch (_) {}
-    if (attempted) {
-      log("auto-switch already attempted this session (target was " + attempted + ")");
-      return;
-    }
+    fetchDetected().then(function (data) {
+      var s = extractSignals(data);
+      log("detected", { country: s.country || "(none)", shopifySuggestedLang: s.suggestedLang || "(none)", browserLang: s.browserLang || "(none)" });
 
-    fetchDetectedLocalization().then(function (data) {
-      var detected = (data && data.detected_values) || {};
-      var detectedCountry = detected.country && detected.country.handle
-        ? String(detected.country.handle).toUpperCase()
-        : "";
+      // Candidate languages, best signal first:
+      //   1. our country -> language map (country-based, the app's core promise)
+      //   2. Shopify's own suggested language
+      //   3. the browser's language
+      var candidates = [];
+      if (s.country && countryToLocale[s.country]) candidates.push({ want: countryToLocale[s.country], via: "country " + s.country });
+      if (s.suggestedLang) candidates.push({ want: s.suggestedLang, via: "shopify suggestion" });
+      if (s.browserLang) candidates.push({ want: s.browserLang, via: "browser language" });
 
-      // Shopify's suggestion factors in the visitor's browser language, so it
-      // can return English even for a French visitor. This app is COUNTRY-based
-      // (France -> French), so prefer our country -> language map and only fall
-      // back to Shopify's suggestion when we have no mapping for the country.
-      var suggestedLang = null;
-      if (data && data.suggestions && data.suggestions.length) {
-        var parts = data.suggestions[0].parts || {};
-        if (parts.language && parts.language.handle) suggestedLang = parts.language.handle;
+      if (candidates.length === 0) { log("no usable signal (no country map, no suggestion, no browser lang) — staying put"); return; }
+
+      var target = null, chosenVia = "";
+      for (var i = 0; i < candidates.length; i++) {
+        var resolved = resolveAvailableLocale(candidates[i].want);
+        log("candidate", candidates[i].want, "via", candidates[i].via, "->", resolved || "(not available in this market)");
+        if (resolved) { target = resolved; chosenVia = candidates[i].via; break; }
       }
 
-      log("Shopify detected", { country: detectedCountry || "(none)", suggestedLanguage: suggestedLang || "(none)" },
-        "current locale", currentLocale, "available", availableLocales);
-
-      if (!detectedCountry && !suggestedLang) { log("nothing detected, aborting"); return; }
-
-      var wantLocale = countryToLocale[detectedCountry] || suggestedLang;
-      if (!wantLocale) { log("no language for detected country", detectedCountry); return; }
-
-      var targetLocale = resolveAvailableLocale(wantLocale);
-      if (!targetLocale) {
-        log("language", wantLocale, "not available for this market. Add it to the market's languages in Settings -> Markets (available:", availableLocales, ")");
+      if (!target) {
+        log("none of the detected languages are available for this market. Available:", availableLocales,
+            "— add the language to this market in the app's Markets & Currency page, and publish it under Languages.");
         return;
       }
 
-      if (String(targetLocale).toLowerCase() === String(currentLocale).toLowerCase()) {
-        log("already showing target locale", targetLocale);
+      if (String(target).toLowerCase() === String(currentLocale).toLowerCase()) {
+        log("already showing the target locale", target, "(via " + chosenVia + ") — nothing to do");
         return;
       }
 
-      // Mark this session as attempted (sessionStorage, not localStorage) so a
-      // failed switch can't permanently block detection. The persistent
-      // localStorage keys are written only on an explicit manual selection.
-      try { sessionStorage.setItem(ATTEMPT_KEY, targetLocale); } catch (_) {}
-
-      // Also switch the country/market (for currency) if it's available.
-      var matchingCountry = null;
-      if (detectedCountry && availableCountries.indexOf(detectedCountry) !== -1) {
-        matchingCountry = detectedCountry;
-      }
+      try { sessionStorage.setItem(ATTEMPT_KEY, target); } catch (_) {}
 
       var form = document.getElementById("translator-localization-form");
-      if (!form) { log("localization form not found (block needs >1 language/country)"); return; }
+      if (!form) { log("localization form not present (needs >1 language or >1 country) — cannot switch"); return; }
 
       var langInput = form.querySelector('select[name="language_code"]');
-      if (langInput) langInput.value = targetLocale;
+      if (langInput) langInput.value = target;
 
-      if (matchingCountry) {
+      // Also switch country/market for currency, when the detected country is
+      // one this storefront actually offers.
+      var matchingCountry = "";
+      if (s.country && availableCountries.indexOf(s.country) !== -1) {
+        matchingCountry = s.country;
         var countryInput = form.querySelector('select[name="country_code"]');
         if (countryInput) countryInput.value = matchingCountry;
       }
 
-      log("switching to", { language: targetLocale, country: matchingCountry || "(unchanged)" });
+      log("SWITCHING", { language: target, via: chosenVia, country: matchingCountry || "(unchanged)" });
       form.submit();
     });
   }
