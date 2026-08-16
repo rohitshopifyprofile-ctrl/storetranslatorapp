@@ -58,6 +58,22 @@ model GlossaryTerm {
   @@index([shop, targetLocale])
 }
 
+// Translation memory: source text → translation, reused so identical strings
+// (theme labels, repeated boilerplate) never cost tokens twice.
+model TranslationCache {
+  id             String   @id @default(cuid())
+  shop           String
+  sourceLocale   String
+  targetLocale   String
+  sourceHash     String   // sha256 of the source text
+  translatedText String
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@unique([shop, sourceLocale, targetLocale, sourceHash])
+  @@index([shop, targetLocale])
+}
+
 model TranslationJob {
   id              String    @id @default(cuid())
   shop            String

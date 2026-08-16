@@ -174,6 +174,7 @@ export async function action({ request }) {
         sourceLocale,
         targetLocale,
         glossary,
+        shop: session.shop, // translation-memory cache
       });
 
       const translationInputs = [];

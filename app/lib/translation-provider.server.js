@@ -4,17 +4,56 @@
 // are charged through a Shopify App Pricing usage meter, not asked to bring
 // their own key. Set TRANSLATION_PROVIDER=claude or deepl in .env.
 
+import { getCachedMap, putCached, hashText } from "./translation-cache.server";
+
 const PROVIDER = process.env.TRANSLATION_PROVIDER || "claude";
+
+async function callProvider(texts, sourceLocale, targetLocale, glossary) {
+  if (PROVIDER === "deepl") return translateWithDeepL({ texts, sourceLocale, targetLocale });
+  return translateWithClaude({ texts, sourceLocale, targetLocale, glossary });
+}
 
 // texts: [{ key, value }] — value may contain HTML (product body_html etc.)
 // glossary: [{ sourceTerm, targetLocale, targetTerm }]
-// Returns: [{ key, value }] translated, same order as input.
-export async function translateFields({ texts, sourceLocale, targetLocale, glossary = [] }) {
+// shop: enables the translation-memory cache (reuse identical strings).
+// skipCacheRead: force fresh translation (e.g. Overwrite mode) but still store.
+// Returns: [{ key, value }] translated, same order as input (value null on fail).
+export async function translateFields({ texts, sourceLocale, targetLocale, glossary = [], shop = null, skipCacheRead = false }) {
   if (texts.length === 0) return [];
-  if (PROVIDER === "deepl") {
-    return translateWithDeepL({ texts, sourceLocale, targetLocale });
+
+  const result = new Array(texts.length);
+
+  // 1) Cache lookup — reuse anything we've translated before.
+  const cached = shop && !skipCacheRead
+    ? await getCachedMap(shop, sourceLocale, targetLocale, texts.map((t) => t.value))
+    : new Map();
+
+  // 2) Collect misses, de-duplicated by source text (same string once).
+  const bySource = new Map(); // source value -> [indexes]
+  texts.forEach((t, i) => {
+    const hit = cached.get(hashText(t.value));
+    if (hit != null) { result[i] = { key: t.key, value: hit }; return; }
+    if (!bySource.has(t.value)) bySource.set(t.value, []);
+    bySource.get(t.value).push(i);
+  });
+
+  // 3) Translate the unique missing source texts once.
+  const uniqueSources = [...bySource.keys()];
+  if (uniqueSources.length > 0) {
+    const translated = await callProvider(
+      uniqueSources.map((v, idx) => ({ key: `u${idx}`, value: v })),
+      sourceLocale, targetLocale, glossary,
+    );
+    const toCache = [];
+    uniqueSources.forEach((src, idx) => {
+      const v = translated[idx]?.value ?? null;
+      for (const i of bySource.get(src)) result[i] = { key: texts[i].key, value: v };
+      if (shop && v != null && v !== src) toCache.push({ source: src, translated: v });
+    });
+    if (shop && toCache.length) await putCached(shop, sourceLocale, targetLocale, toCache);
   }
-  return translateWithClaude({ texts, sourceLocale, targetLocale, glossary });
+
+  return result;
 }
 
 // Keep each Claude call's input (and therefore its JSON output) small enough to

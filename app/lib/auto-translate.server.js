@@ -77,7 +77,7 @@ async function shopSourceLocale(shop) {
 
 // Translate `pending` fields of one resource into one locale and register them.
 // Returns the number of words translated.
-async function translateAndRegister(admin, shop, resourceId, pending, sourceLocale, targetLocale) {
+async function translateAndRegister(admin, shop, resourceId, pending, sourceLocale, targetLocale, overwrite = false) {
   const textFields = pending.filter((c) => c.value && c.value.trim().length > 0);
   if (textFields.length === 0) return 0;
 
@@ -87,6 +87,8 @@ async function translateAndRegister(admin, shop, resourceId, pending, sourceLoca
     sourceLocale,
     targetLocale,
     glossary,
+    shop,                    // enables the translation-memory cache
+    skipCacheRead: overwrite, // Overwrite forces fresh translations
   });
 
   const inputs = [];
@@ -126,7 +128,7 @@ export async function autoTranslateResource(admin, shop, resourceId, onlyLocales
     try {
       const res = await getResourcePending(admin, resourceId, locale, overwrite);
       if (res && res.pending.length > 0) {
-        words += await translateAndRegister(admin, shop, resourceId, res.pending, sourceLocale, locale);
+        words += await translateAndRegister(admin, shop, resourceId, res.pending, sourceLocale, locale, overwrite);
       }
     } catch (error) {
       console.error(`[auto-translate] ${resourceId} -> ${locale} failed:`, error?.message || error);
@@ -172,7 +174,7 @@ export async function translateWholeStore(admin, shop, jobId = null, onlyLocales
             `${resourceType}/${locale} query`,
           );
           for (const r of resources) {
-            const w = await translateAndRegister(admin, shop, r.resourceId, r.pending, sourceLocale, locale);
+            const w = await translateAndRegister(admin, shop, r.resourceId, r.pending, sourceLocale, locale, overwrite);
             totalWords += w;
             totalResources += 1;
             // Live word count so the bar visibly moves even within a long step.
