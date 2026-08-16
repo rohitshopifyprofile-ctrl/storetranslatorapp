@@ -93,7 +93,7 @@ export function marketWebPresence(market) {
 const WEB_PRESENCE_UPDATE_MUTATION = `#graphql
   mutation WebPresenceUpdate($id: ID!, $input: WebPresenceUpdateInput!) {
     webPresenceUpdate(id: $id, input: $input) {
-      webPresence { id alternateLocales { locale } }
+      webPresence { id defaultLocale { locale } alternateLocales { locale } }
       userErrors { field message }
     }
   }
@@ -111,6 +111,23 @@ export async function setMarketAlternateLocales(admin, webPresenceId, alternateL
     throw new Error(result.userErrors.map((e) => e.message).join(", "));
   }
   return (result.webPresence?.alternateLocales ?? []).map((l) => l.locale);
+}
+
+// Set a market web presence's DEFAULT (native/fallback) language. The default
+// locale is the language buyers see when nothing else matches, so making it
+// English is what keeps English "native" for a market. Shopify forbids the same
+// locale being both default and alternate, so the caller passes the rebuilt
+// alternate list (old default folded in, new default removed).
+export async function setMarketDefaultLocale(admin, webPresenceId, defaultLocale, alternateLocales) {
+  const response = await admin.graphql(WEB_PRESENCE_UPDATE_MUTATION, {
+    variables: { id: webPresenceId, input: { defaultLocale, alternateLocales } },
+  });
+  const { data } = await response.json();
+  const result = data.webPresenceUpdate;
+  if (result.userErrors.length > 0) {
+    throw new Error(result.userErrors.map((e) => e.message).join(", "));
+  }
+  return result.webPresence?.defaultLocale?.locale ?? defaultLocale;
 }
 
 // Extract unique currency codes from a market's country regions.
