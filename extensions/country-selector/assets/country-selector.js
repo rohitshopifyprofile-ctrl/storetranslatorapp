@@ -299,8 +299,13 @@
         return;
       }
 
-      if (String(target).toLowerCase() === String(currentLocale).toLowerCase()) {
-        log("already showing the target locale", target, "(via " + chosenVia + ") — nothing to do");
+      // Compare by BASE language, not the full locale string. Shopify may report
+      // the active language as "es" while the only available locale is a region
+      // variant like "es-FR"; a strict !== would re-switch every load (an es-fr
+      // redirect loop). If we're already on this language, there's nothing to do.
+      var baseOf = function (x) { return String(x || "").toLowerCase().split("-")[0]; };
+      if (baseOf(target) === baseOf(currentLocale)) {
+        log("already on this language", currentLocale, "(target " + target + ", via " + chosenVia + ") — nothing to do");
         return;
       }
 
